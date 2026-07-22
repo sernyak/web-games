@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="uk" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Гра НЛП: Алфавіт (Premium)</title>
+    <!-- Підключення Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Налаштування для Tailwind Dark Mode */
+        body {
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+        }
+
+        /* Стиль для плавної появи/зникнення */
+        .letter {
+            text-align: center;
+            white-space: pre;
+            position: absolute;
+            color: white;
+            opacity: 0;
+            transform: scale(0.9);
+            transition: opacity 0s ease-out, transform 0s ease-out; /* Анімацію прибрано (час 0с) */
+            /* Тінь для преміум-відчуття */
+            text-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+            line-height: 1.1; /* <--- ЗМЕНШЕНО МІЖРЯДКОВИЙ ІНТЕРВАЛ */
+        }
+
+        /* Клас для анімації */
+        .letter-visible {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        /* Сучасний перемикач (toggle) */
+        .toggle-checkbox:checked {
+            @apply: bg-blue-600;
+            right: 0;
+            border-color: #3b82f6;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            @apply: bg-blue-600;
+        }
+    </style>
+</head>
+<body class="h-screen m-0 overflow-hidden relative" id="game-body">
+
+    <!-- Головний екран гри -->
+    <div id="letter-container">
+        <div class="letter" id="letter"></div>
+    </div>
+
+    <!-- Таймер -->
+    <div class="timer fixed top-5 right-5 bg-gray-900 bg-opacity-50 text-white py-2 px-4 rounded-lg shadow-xl text-2xl font-semibold" id="timer"></div>
+
+    <!-- Кнопка "Стоп" в грі -->
+    <button id="stopButton" onclick="stopGame()" class="fixed top-5 left-5 bg-red-600 hover:bg-red-700 text-white py-2 px-6 rounded-lg shadow-xl text-lg font-bold transition-all duration-200 hidden z-20">
+        Стоп
+    </button>
+
+    <!-- Модальне вікно налаштувань -->
+    <div id="settings-overlay" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="settings-modal bg-white bg-opacity-10 backdrop-filter backdrop-blur-lg p-8 rounded-2xl shadow-2xl w-full max-w-md border border-gray-700">
+            <h3 class="text-3xl font-bold text-white mb-6 text-center">Налаштування</h3>
+            
+            <div class="grid grid-cols-2 gap-x-6 gap-y-4 text-white">
+                <!-- Кольори -->
+                <div class="mb-2">
+                    <label class="block mb-1 font-medium">Фон:</label>
+                    <input type="color" id="backgroundColor" value="#2ab64f" class="w-full h-10 p-1 rounded-md border border-gray-600 bg-gray-800">
+                </div>
+                <div class="mb-2">
+                    <label class="block mb-1 font-medium">Літери:</label>
+                    <input type="color" id="letterColor" value="#000000" class="w-full h-10 p-1 rounded-md border border-gray-600 bg-gray-800">
+                </div>
+
+                <!-- Розмір та Швидкість -->
+                <div class="mb-2">
+                    <label class="block mb-1 font-medium">Розмір (px):</label>
+                    <input type="number" id="fontSize" value="100" class="w-full p-2 rounded-md border border-gray-600 bg-gray-800 text-white">
+                </div>
+                <div class="mb-2">
+                    <label class="block mb-1 font-medium">Швидкість (мс):</label>
+                    <input type="number" id="speed" value="900" class="w-full p-2 rounded-md border border-gray-600 bg-gray-800 text-white">
+                </div>
+                 <div class="mb-2">
+                    <label class="block mb-1 font-medium">Час (сек):</label>
+                    <!-- ЗМІНЕНО ЗНАЧЕННЯ ЗА ЗАМОВЧУВАННЯМ -->
+                    <input type="number" id="duration" value="240" class="w-full p-2 rounded-md border border-gray-600 bg-gray-800 text-white">
+                </div>
+                 <div class="mb-2">
+                    <label class="block mb-1 font-medium">Шрифт:</label>
+                    <!-- <input type="text" id="fontFamily" value="Inter, system-ui, sans-serif" class="w-full p-2 rounded-md border border-gray-600 bg-gray-800 text-white"> -->
+                    <!-- V --- ЗАМІНЕНО НА ВИПАДАЮЧИЙ СПИСОК --- V -->
+                    <select id="fontFamily" class="w-full p-2 rounded-md border border-gray-600 bg-gray-800 text-white">
+                        <option value="Inter, system-ui, sans-serif">Inter (Сучасний)</option>
+                        <option value="Roboto, Arial, sans-serif">Roboto (Чистий)</option>
+                        <option value="Times New Roman, Times, serif">Times (Із засічками)</option>
+                        <option value="Courier New, Courier, monospace">Courier (Моно)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Перемикачі -->
+            <div class="mt-6 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="font-medium text-white">Включити "Ноги"</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="includeLegs" class="sr-only peer" checked>
+                        <div class="w-11 h-6 bg-gray-600 rounded-full peer peer-focus:ring-2 peer-focus:ring-blue-500 peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="font-medium text-white">Динамічний розмір</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="dynamicSize" class="sr-only peer" checked>
+                        <div class="w-11 h-6 bg-gray-600 rounded-full peer peer-focus:ring-2 peer-focus:ring-blue-500 peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Кнопки -->
+            <div class="mt-8">
+                <button onclick="startGame()" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold py-3 px-6 rounded-lg shadow-lg transition-all duration-200">
+                    Старт
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Глобальні налаштування та стан гри
+        let settings = {
+            backgroundColor: '#2ab64f',
+            fontSize: 100,
+            letterColor: '#000000',
+            speed: 900,
+            includeLegs: true,
+            fontFamily: 'Inter, system-ui, sans-serif',
+            // ЗМІНЕНО ЗНАЧЕННЯ ЗА ЗАМОВЧУВАННЯМ
+            duration: 240, 
+            dynamicSize: true
+        };
+        
+        let timerInterval;
+        let gameInterval;
+        let animationTimeout;
+
+        const letters = [
+            'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Є', 'Ж', 'З', 'И', 'І', 'Ї', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ю', 'Я'
+        ];
+        const handActions = ['П', 'Л', 'О']; // Права, Ліва, Обидві
+        const legActions = ['П', 'Л', 'О']; // Права, Ліва, Обидві
+
+        // Елементи DOM
+        const letterElement = document.getElementById('letter');
+        const settingsOverlay = document.getElementById('settings-overlay');
+        const timerElement = document.getElementById('timer');
+        const stopButton = document.getElementById('stopButton');
+        const gameBody = document.getElementById('game-body');
+
+        // Встановлюємо початкові значення
+        document.getElementById('backgroundColor').value = settings.backgroundColor;
+        document.getElementById('letterColor').value = settings.letterColor;
+        document.getElementById('fontSize').value = settings.fontSize;
+        document.getElementById('speed').value = settings.speed;
+        document.getElementById('fontFamily').value = settings.fontFamily;
+        document.getElementById('includeLegs').checked = settings.includeLegs;
+        document.getElementById('dynamicSize').checked = settings.dynamicSize;
+        document.getElementById('duration').value = settings.duration;
+        // gameBody.style.backgroundColor = settings.backgroundColor; // Прибрано, щоб модальне вікно виглядало добре
+        letterElement.style.color = settings.letterColor;
+
+
+        function getRandomCombination() {
+            const randomLetter = letters[Math.floor(Math.random() * letters.length)];
+            const randomHand = handActions[Math.floor(Math.random() * handActions.length)];
+            
+            let displayText = `${randomLetter}\n${randomHand}`;
+            if (settings.includeLegs) {
+                const randomLeg = legActions[Math.floor(Math.random() * legActions.length)];
+                displayText += `\n${randomLeg}`;
+            }
+            return displayText;
+        }
+
+        function updateLetter() {
+            // 1. Очищуємо попередній таймаут анімації, якщо він є
+            if (animationTimeout) clearTimeout(animationTimeout);
+
+            // 2. Ховаємо літеру (для анімації)
+            letterElement.classList.remove('letter-visible');
+
+            // 3. Таймаут, щоб анімація зникнення спрацювала перед появою нової
+            animationTimeout = setTimeout(() => {
+                // 4. Оновлюємо контент
+                letterElement.textContent = getRandomCombination();
+                
+                // 5. ОНОВЛЕНА ЛОГІКА РОЗМІРУ ШРИФТУ (РОБИМО ЦЕ ПЕРЕД ОБЧИСЛЕННЯМ ПОЗИЦІЇ)
+                if (settings.dynamicSize) {
+                    letterElement.style.fontSize = (Math.random() * 50 + 50) + 'px'; // 50px-100px
+                } else {
+                    letterElement.style.fontSize = settings.fontSize + 'px'; // Фіксований розмір
+                }
+                
+                // 6. Оновлюємо позицію (ТЕПЕР, КОЛИ РОЗМІРИ ВІДОМІ)
+                // Залишаємо трохи відступу від країв (20px)
+                const vpHeight = window.innerHeight;
+                const vpWidth = window.innerWidth;
+                const elHeight = letterElement.offsetHeight; // Використовуємо offsetHeight для кращої точності
+                const elWidth = letterElement.offsetWidth;   // Використовуємо offsetWidth
+
+                // Переконуємось, що максимальне значення не від'ємне, якщо елемент більший за екран
+                const maxTop = Math.max(0, vpHeight - elHeight - 40);
+                const maxLeft = Math.max(0, vpWidth - elWidth - 40);
+
+                letterElement.style.top = (Math.random() * maxTop) + 20 + 'px';
+                letterElement.style.left = (Math.random() * maxLeft) + 20 + 'px';
+                
+                // 7. Показуємо літеру з анімацією
+                letterElement.classList.add('letter-visible');
+
+            }, 0); // 0мс на зникнення, збігається з 'transition' в CSS (тобто, миттєво)
+        }
+
+        function startGame() {
+            // 1. Зчитуємо всі налаштування
+            settings.backgroundColor = document.getElementById('backgroundColor').value;
+            settings.fontSize = parseInt(document.getElementById('fontSize').value);
+            settings.letterColor = document.getElementById('letterColor').value;
+            settings.speed = parseInt(document.getElementById('speed').value);
+            settings.fontFamily = document.getElementById('fontFamily').value;
+            settings.includeLegs = document.getElementById('includeLegs').checked;
+            settings.dynamicSize = document.getElementById('dynamicSize').checked;
+            settings.duration = parseInt(document.getElementById('duration').value);
+
+            // 2. Застосовуємо стилі
+            gameBody.style.backgroundColor = settings.backgroundColor;
+            letterElement.style.color = settings.letterColor;
+            letterElement.style.fontFamily = settings.fontFamily;
+
+            // 3. Ховаємо налаштування, показуємо гру
+            settingsOverlay.style.display = 'none';
+            stopButton.style.display = 'block';
+            timerElement.style.display = 'block';
+
+            // 4. Очищуємо старі інтервали
+            clearInterval(gameInterval);
+            clearInterval(timerInterval);
+
+            // 5. Запускаємо таймер
+            let timeLeft = settings.duration;
+            timerElement.textContent = `${timeLeft} с`;
+
+            timerInterval = setInterval(() => {
+                timeLeft -= 1;
+                timerElement.textContent = `${timeLeft} с`;
+                if (timeLeft <= 0) {
+                    stopGame();
+                }
+            }, 1000);
+
+            // 6. Запускаємо гру
+            updateLetter(); // Перший запуск одразу
+            gameInterval = setInterval(updateLetter, settings.speed);
+        }
+
+        function stopGame() {
+            // 1. Зупиняємо всі процеси
+            clearInterval(gameInterval);
+            clearInterval(timerInterval);
+            if (animationTimeout) clearTimeout(animationTimeout);
+
+            // 2. Ховаємо ігровий UI
+            stopButton.style.display = 'none';
+            timerElement.style.display = 'none';
+            letterElement.classList.remove('letter-visible');
+
+            // 3. Показуємо налаштування
+            settingsOverlay.style.display = 'flex';
+        }
+    </script>
+</body>
+</html>

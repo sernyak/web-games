@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Schulte Focus Pro</title>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class', // Enable manual dark mode toggling
+        }
+    </script>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: #F5F5F7; /* Default Light Background */
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        /* Dark mode overrides - explicitly stronger selector */
+        html.dark body {
+            background-color: #0f172a !important; /* Slate 950 force apply */
+        }
+
+        * { -webkit-tap-highlight-color: transparent; }
+
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+
+        @keyframes popIn {
+            0% { transform: scale(0.95); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        @keyframes slideIn {
+            0% { transform: translateX(20px); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-4px); }
+            75% { transform: translateX(4px); }
+        }
+
+        .animate-pop { animation: popIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-slide { animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-shake { animation: shake 0.3s ease-in-out; }
+
+        .cell-shadow {
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+        .cell-shadow:active {
+            transform: scale(0.95);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        
+        /* Hide scrollbar for size selector but keep functionality */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        // --- Icons ---
+        const PlayIcon = () => <i className="ph ph-play-fill text-xl"></i>;
+        const ArrowCounterClockwiseIcon = () => <i className="ph ph-arrow-counter-clockwise text-xl"></i>;
+        const CheckIcon = () => <i className="ph ph-check text-xl"></i>;
+        const ClockIcon = () => <i className="ph ph-clock-counter-clockwise text-xl"></i>;
+        const TrashIcon = () => <i className="ph ph-trash text-lg"></i>;
+        const CaretLeftIcon = () => <i className="ph ph-caret-left text-xl"></i>;
+        const SunIcon = () => <i className="ph ph-sun text-xl"></i>;
+        const MoonIcon = () => <i className="ph ph-moon text-xl"></i>;
+        const TrophyIcon = () => <i className="ph ph-trophy-fill text-2xl"></i>;
+        const TrophySimpleIcon = () => <i className="ph ph-trophy-fill text-lg"></i>;
+
+        // --- Components ---
+
+        const Toggle = ({ label, checked, onChange }) => (
+            <div className="flex items-center justify-between py-3">
+                <span className="text-slate-700 dark:text-slate-200 font-medium transition-colors">{label}</span>
+                <button 
+                    onClick={() => onChange(!checked)}
+                    className={`relative w-12 h-7 rounded-full transition-colors duration-300 focus:outline-none ${
+                        checked ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
+                    }`}
+                >
+                    <span 
+                        className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full shadow-sm transform transition-transform duration-300 ${
+                            checked ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                    />
+                </button>
+            </div>
+        );
+
+        const App = () => {
+            // -- State --
+            const [gameState, setGameState] = useState('menu'); // menu, playing, won, history
+            const [gridSize, setGridSize] = useState(5);
+            const [isGorbov, setIsGorbov] = useState(false);
+            const [isColorful, setIsColorful] = useState(false);
+            
+            // Theme State
+            const [isDark, setIsDark] = useState(() => {
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    return true;
+                }
+                return false;
+            });
+            
+            const [cells, setCells] = useState([]);
+            const [nextTarget, setNextTarget] = useState(1);
+            
+            // Gorbov State
+            const [gorbovState, setGorbovState] = useState({ color: 'black', number: 1 });
+            
+            const [startTime, setStartTime] = useState(null);
+            const [elapsed, setElapsed] = useState(0);
+            const [shakeId, setShakeId] = useState(null);
+            
+            // History State
+            const [history, setHistory] = useState(() => {
+                const saved = localStorage.getItem('schulte_history');
+                return saved ? JSON.parse(saved) : [];
+            });
+
+            const timerRef = useRef(null);
+
+            // -- Effects --
+
+            // Theme Effect
+            useEffect(() => {
+                if (isDark) {
+                    document.documentElement.classList.add('dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
+                }
+            }, [isDark]);
+
+            const toggleTheme = () => setIsDark(!isDark);
+
+            // Timer logic
+            useEffect(() => {
+                if (gameState === 'playing') {
+                    const start = Date.now();
+                    timerRef.current = setInterval(() => {
+                        setElapsed((Date.now() - start) / 1000);
+                    }, 50);
+                } else {
+                    clearInterval(timerRef.current);
+                }
+                return () => clearInterval(timerRef.current);
+            }, [gameState]);
+
+            // -- Logic --
+
+            const getCurrentModeKey = () => isGorbov ? 'gorbov' : (isColorful ? 'colorful' : 'classic');
+
+            const saveResult = (finalTime) => {
+                const newRecord = {
+                    id: Date.now(),
+                    date: new Date().toISOString(),
+                    time: finalTime,
+                    gridSize: gridSize,
+                    mode: getCurrentModeKey()
+                };
+                
+                const updatedHistory = [newRecord, ...history];
+                if (updatedHistory.length > 200) updatedHistory.pop(); // Increased storage slightly
+                
+                setHistory(updatedHistory);
+                localStorage.setItem('schulte_history', JSON.stringify(updatedHistory));
+            };
+
+            const clearHistory = () => {
+                if(confirm("Ви впевнені, що хочете очистити історію?")) {
+                    setHistory([]);
+                    localStorage.removeItem('schulte_history');
+                }
+            };
+
+            const generateGrid = useCallback(() => {
+                const totalCells = gridSize * gridSize;
+                let newCells = [];
+                
+                // Palette with Dark Mode variants (lighter shades for dark bg)
+                const palette = [
+                    'text-blue-600 dark:text-blue-400', 
+                    'text-emerald-600 dark:text-emerald-400', 
+                    'text-purple-600 dark:text-purple-400', 
+                    'text-amber-600 dark:text-amber-400', 
+                    'text-rose-600 dark:text-rose-400', 
+                    'text-cyan-600 dark:text-cyan-400', 
+                    'text-fuchsia-600 dark:text-fuchsia-400'
+                ];
+
+                if (!isGorbov) {
+                    for (let i = 1; i <= totalCells; i++) {
+                        const color = isColorful 
+                            ? palette[Math.floor(Math.random() * palette.length)] 
+                            : 'text-slate-800 dark:text-slate-100'; // Default black/white
+                        newCells.push({ id: i, value: i, color: color });
+                    }
+                } else {
+                    const blackCount = Math.ceil(totalCells / 2);
+                    const redCount = totalCells - blackCount;
+                    
+                    for (let i = 1; i <= blackCount; i++) {
+                        newCells.push({ 
+                            id: `b-${i}`, 
+                            value: i, 
+                            color: 'text-slate-800 dark:text-slate-100', 
+                            type: 'black' 
+                        });
+                    }
+                    for (let i = 1; i <= redCount; i++) {
+                        newCells.push({ 
+                            id: `r-${i}`, 
+                            value: i, 
+                            color: 'text-rose-600 dark:text-rose-400', 
+                            type: 'red' 
+                        });
+                    }
+                }
+
+                for (let i = newCells.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [newCells[i], newCells[j]] = [newCells[j], newCells[i]];
+                }
+
+                setCells(newCells);
+            }, [gridSize, isGorbov, isColorful]);
+
+            const startGame = () => {
+                generateGrid();
+                setNextTarget(1);
+                setGorbovState({ color: 'black', number: 1 });
+                setElapsed(0);
+                setGameState('playing');
+                setStartTime(Date.now());
+            };
+
+            const handleCellClick = (cell) => {
+                if (shakeId !== null) setShakeId(null);
+
+                let isCorrect = false;
+                let gameFinished = false;
+
+                if (!isGorbov) {
+                    if (cell.value === nextTarget) {
+                        isCorrect = true;
+                        if (nextTarget === gridSize * gridSize) {
+                            gameFinished = true;
+                        } else {
+                            setNextTarget(prev => prev + 1);
+                        }
+                    }
+                } else {
+                    if (cell.type === gorbovState.color && cell.value === gorbovState.number) {
+                        isCorrect = true;
+                        const totalCells = gridSize * gridSize;
+                        const blackLimit = Math.ceil(totalCells / 2);
+                        const redLimit = totalCells - blackLimit;
+                        
+                        let nextColor = gorbovState.color === 'black' ? 'red' : 'black';
+                        let nextNumber = gorbovState.number;
+
+                        if (gorbovState.color === 'black') {
+                            if (gorbovState.number > redLimit) {
+                                gameFinished = true;
+                            } else {
+                                nextColor = 'red';
+                            }
+                        } else {
+                            nextColor = 'black';
+                            nextNumber = gorbovState.number + 1;
+                            if (nextNumber > blackLimit) gameFinished = true;
+                        }
+                        
+                        if (!gameFinished) {
+                            setGorbovState({ color: nextColor, number: nextNumber });
+                        }
+                    }
+                }
+
+                if (isCorrect) {
+                    if (gameFinished) {
+                        saveResult(elapsed);
+                        setGameState('won');
+                    }
+                } else {
+                    setShakeId(cell.id);
+                    setTimeout(() => setShakeId(null), 400);
+                }
+            };
+
+            const formatTime = (seconds) => {
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                const ms = Math.floor((seconds % 1) * 100);
+                return `${mins > 0 ? mins + ':' : ''}${secs < 10 && mins > 0 ? '0' : ''}${secs}.${ms < 10 ? '0' : ''}${ms}`;
+            };
+
+            const formatDate = (isoString) => {
+                const date = new Date(isoString);
+                return new Intl.DateTimeFormat('uk-UA', { 
+                    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' 
+                }).format(date);
+            };
+
+            const getInstructionText = () => {
+                if (!isGorbov) {
+                    return `Знайдіть число: ${nextTarget}`;
+                } else {
+                    const colorText = gorbovState.color === 'black' ? 'Чорне' : 'Червоне';
+                    // Dynamic color for text based on theme
+                    const colorClass = gorbovState.color === 'black' 
+                        ? 'text-slate-800 dark:text-slate-100' 
+                        : 'text-rose-600 dark:text-rose-400';
+                    return (
+                        <span>
+                            Знайдіть: <span className={`font-bold ${colorClass}`}>{colorText} {gorbovState.number}</span>
+                        </span>
+                    );
+                }
+            };
+
+            const getModeLabel = (mode) => {
+                switch(mode) {
+                    case 'gorbov': return 'Горбов';
+                    case 'colorful': return 'Кольоровий';
+                    default: return 'Класика';
+                }
+            };
+
+            // Calculate dynamic font size based on grid size
+            const getDynamicFontSize = () => {
+                if (gridSize > 7) return '1rem'; // Small for 8x8, 9x9, 10x10
+                if (gridSize > 5) return '1.5rem';
+                return '2rem';
+            };
+
+            // --- Renders ---
+
+            // 1. Menu Screen
+            if (gameState === 'menu') {
+                return (
+                    // Added bg classes to the container as well to be safe, but CSS body fix handles the rest
+                    <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden transition-colors duration-300 bg-[#F5F5F7] dark:bg-slate-950">
+                        {/* Background blobs - adjusted opacity for dark mode */}
+                        <div className="absolute top-[-10%] right-[-10%] w-96 h-96 bg-blue-200 dark:bg-blue-900 rounded-full mix-blend-multiply dark:mix-blend-screen filter blur-3xl opacity-30 dark:opacity-20 animate-blob transition-colors duration-500"></div>
+                        <div className="absolute bottom-[-10%] left-[-10%] w-96 h-96 bg-purple-200 dark:bg-purple-900 rounded-full mix-blend-multiply dark:mix-blend-screen filter blur-3xl opacity-30 dark:opacity-20 animate-blob animation-delay-2000 transition-colors duration-500"></div>
+
+                        <div className="w-full max-w-md bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl rounded-3xl shadow-xl border border-white/50 dark:border-slate-700 p-8 z-10 animate-pop transition-all duration-300">
+                            
+                            {/* Theme Toggle Top Right */}
+                            <div className="absolute top-6 right-6">
+                                <button 
+                                    onClick={toggleTheme}
+                                    className="p-2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
+                                >
+                                    {isDark ? <SunIcon /> : <MoonIcon />}
+                                </button>
+                            </div>
+
+                            <div className="flex flex-col items-center mb-6">
+                                <div className="w-16 h-16 bg-slate-900 dark:bg-slate-700 rounded-2xl flex items-center justify-center mb-4 shadow-lg text-white transition-colors">
+                                    <span className="font-bold text-3xl">S</span>
+                                </div>
+                                <h1 className="text-2xl font-bold text-slate-800 dark:text-white transition-colors">Schulte Focus Pro</h1>
+                                <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 transition-colors">Тренуйте зір та увагу</p>
+                            </div>
+
+                            <div className="space-y-5">
+                                <div>
+                                    <label className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2 block">Розмір сітки: {gridSize}x{gridSize}</label>
+                                    <div className="flex bg-slate-100 dark:bg-slate-700/50 p-1 rounded-xl transition-colors overflow-x-auto no-scrollbar gap-1">
+                                        {[3, 4, 5, 6, 7, 8, 9, 10].map(size => (
+                                            <button
+                                                key={size}
+                                                onClick={() => setGridSize(size)}
+                                                className={`min-w-[40px] flex-1 py-2 text-sm font-medium rounded-lg transition-all duration-200 whitespace-nowrap ${
+                                                    gridSize === size 
+                                                    ? 'bg-white dark:bg-slate-600 text-slate-900 dark:text-white shadow-sm' 
+                                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                                                }`}
+                                            >
+                                                {size}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2 block">Налаштування</label>
+                                    <Toggle 
+                                        label="Режим Горбова" 
+                                        checked={isGorbov} 
+                                        onChange={(val) => { setIsGorbov(val); if(val) setIsColorful(false); }} 
+                                    />
+                                    {!isGorbov && (
+                                        <div className="border-t border-slate-100 dark:border-slate-700 mt-1 pt-1 transition-colors">
+                                            <Toggle label="Кольорові числа" checked={isColorful} onChange={setIsColorful} />
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="flex gap-3 pt-2">
+                                    <button 
+                                        onClick={() => setGameState('history')}
+                                        className="w-1/4 py-4 bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 rounded-2xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center justify-center"
+                                    >
+                                        <ClockIcon />
+                                    </button>
+                                    <button 
+                                        onClick={startGame}
+                                        className="flex-1 py-4 bg-slate-900 dark:bg-blue-600 text-white rounded-2xl font-semibold text-lg hover:bg-slate-800 dark:hover:bg-blue-500 transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg shadow-slate-900/20 dark:shadow-blue-900/20"
+                                    >
+                                        <PlayIcon /> Почати
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // 2. History Screen
+            if (gameState === 'history') {
+                // Determine the current context to show relevant best record for TOP CARD
+                const contextMode = getCurrentModeKey();
+                const contextSize = gridSize;
+                const contextFilteredHistory = history.filter(r => r.mode === contextMode && r.gridSize === contextSize);
+                const currentContextBest = contextFilteredHistory.length > 0 
+                    ? contextFilteredHistory.reduce((prev, current) => (prev.time < current.time) ? prev : current)
+                    : null;
+
+                // Determine BEST records for ALL categories to highlight in LIST
+                const bestRecordsMap = {}; // Key: "mode-size", Value: recordId
+                history.forEach(record => {
+                    const key = `${record.mode}-${record.gridSize}`;
+                    if (!bestRecordsMap[key] || record.time < bestRecordsMap[key].time) {
+                        bestRecordsMap[key] = record;
+                    }
+                });
+
+                return (
+                    <div className="min-h-screen flex flex-col items-center bg-[#F5F5F7] dark:bg-slate-950 p-6 relative transition-colors duration-300">
+                         <div className="w-full max-w-md animate-pop">
+                            <header className="flex items-center justify-between mb-8">
+                                <button 
+                                    onClick={() => setGameState('menu')}
+                                    className="p-3 -ml-3 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-800/50"
+                                >
+                                    <div className="flex items-center gap-1 font-medium"><CaretLeftIcon /> Назад</div>
+                                </button>
+                                <h2 className="text-xl font-bold text-slate-900 dark:text-white transition-colors">Історія</h2>
+                                <button 
+                                    onClick={clearHistory}
+                                    className="p-3 -mr-3 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors rounded-full hover:bg-red-50 dark:hover:bg-red-900/20"
+                                    disabled={history.length === 0}
+                                >
+                                    <TrashIcon />
+                                </button>
+                            </header>
+
+                            {history.length === 0 ? (
+                                <div className="text-center py-20">
+                                    <div className="w-16 h-16 bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-full flex items-center justify-center mx-auto mb-4 transition-colors">
+                                        <ClockIcon className="text-3xl" />
+                                    </div>
+                                    <p className="text-slate-500 dark:text-slate-400 transition-colors">Історія поки що порожня.</p>
+                                    <p className="text-slate-400 dark:text-slate-500 text-sm mt-1 transition-colors">Зіграйте свою першу гру!</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3 pb-8">
+                                    {/* Contextual Best Record Card (Summary for current selection) */}
+                                    {currentContextBest ? (
+                                        <div className="mb-6 bg-gradient-to-r from-slate-800 to-slate-900 dark:from-blue-600 dark:to-blue-700 rounded-2xl p-5 text-white shadow-lg shadow-slate-900/10 dark:shadow-blue-900/20 animate-pop">
+                                            <div className="flex justify-between items-center">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="bg-white/20 p-2.5 rounded-xl backdrop-blur-sm">
+                                                        <TrophyIcon />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-bold text-white/80 uppercase tracking-wide">
+                                                            Обрано: {contextSize}x{contextSize}
+                                                        </p>
+                                                        <p className="text-sm font-medium opacity-90">
+                                                            Ваш рекорд у цьому режимі
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-3xl font-mono font-bold tracking-tight">
+                                                    {formatTime(currentContextBest.time)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="mb-6 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-center text-slate-500 text-sm">
+                                            У вас ще немає ігор в режимі <strong>{getModeLabel(contextMode)} {contextSize}x{contextSize}</strong>
+                                        </div>
+                                    )}
+
+                                    <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 mt-4 ml-1">Всі результати</h3>
+
+                                    {/* History List with Smart Highlighting */}
+                                    {history.map((record) => {
+                                        const isBestInClass = bestRecordsMap[`${record.mode}-${record.gridSize}`]?.id === record.id;
+                                        
+                                        return (
+                                            <div 
+                                                key={record.id} 
+                                                className={`
+                                                    relative p-4 rounded-2xl shadow-sm border flex items-center justify-between animate-slide transition-colors
+                                                    ${isBestInClass 
+                                                        ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700/50' 
+                                                        : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700'
+                                                    }
+                                                `}
+                                            >
+                                                <div>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className={`text-sm font-semibold transition-colors ${isBestInClass ? 'text-amber-800 dark:text-amber-400' : 'text-slate-800 dark:text-slate-200'}`}>
+                                                            {getModeLabel(record.mode)}
+                                                        </span>
+                                                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium transition-colors ${
+                                                            isBestInClass 
+                                                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' 
+                                                                : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'
+                                                        }`}>
+                                                            {record.gridSize}x{record.gridSize}
+                                                        </span>
+                                                    </div>
+                                                    <p className={`text-xs font-medium transition-colors ${isBestInClass ? 'text-amber-600/70 dark:text-amber-500/60' : 'text-slate-400 dark:text-slate-500'}`}>
+                                                        {formatDate(record.date)}
+                                                    </p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        {isBestInClass && (
+                                                            <div className="flex flex-col items-end">
+                                                                <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider mb-0.5">Рекорд</span>
+                                                                <TrophySimpleIcon className="text-amber-500 text-lg" />
+                                                            </div>
+                                                        )}
+                                                        <span className={`block text-xl font-mono font-medium transition-colors ${
+                                                            isBestInClass 
+                                                                ? 'text-amber-600 dark:text-amber-400 font-bold' 
+                                                                : 'text-slate-900 dark:text-white'
+                                                        }`}>
+                                                            {formatTime(record.time)}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                         </div>
+                    </div>
+                );
+            }
+
+            // 3. Won Screen
+            if (gameState === 'won') {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center p-6 relative bg-[#F5F5F7] dark:bg-slate-950 transition-colors duration-300">
+                        <div className="w-full max-w-sm bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl rounded-3xl shadow-2xl p-8 text-center animate-pop border border-white/50 dark:border-slate-700 transition-colors">
+                            <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-full flex items-center justify-center mx-auto mb-6 transition-colors">
+                                <CheckIcon className="text-4xl" />
+                            </div>
+                            
+                            <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2 transition-colors">Чудово!</h2>
+                            <p className="text-slate-500 dark:text-slate-400 mb-8 transition-colors">Результат збережено в історію.</p>
+                            
+                            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-6 mb-8 border border-slate-100 dark:border-slate-700 transition-colors">
+                                <p className="text-sm text-slate-400 dark:text-slate-500 uppercase tracking-wide font-semibold mb-1">Час</p>
+                                <p className="text-4xl font-mono font-medium text-slate-900 dark:text-white transition-colors">{formatTime(elapsed)}</p>
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button 
+                                    onClick={() => setGameState('history')}
+                                    className="flex-1 py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-medium hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                                >
+                                    Історія
+                                </button>
+                                <button 
+                                    onClick={startGame}
+                                    className="flex-1 py-3 bg-slate-900 dark:bg-blue-600 text-white rounded-xl font-medium hover:bg-slate-800 dark:hover:bg-blue-500 shadow-lg shadow-slate-900/20 dark:shadow-blue-900/20 transition-all active:scale-95"
+                                >
+                                    Ще раз
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // 4. Game Board
+            return (
+                <div className="min-h-screen flex flex-col items-center bg-[#F5F5F7] dark:bg-slate-950 text-slate-900 dark:text-white relative transition-colors duration-300">
+                    
+                    <header className="w-full max-w-2xl px-6 py-6 flex items-center justify-between">
+                        <button 
+                            onClick={() => setGameState('menu')}
+                            className="p-2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-white dark:hover:bg-slate-800 rounded-full transition-all"
+                        >
+                            <span className="text-sm font-medium">Меню</span>
+                        </button>
+                        
+                        <div className="font-mono text-xl font-medium bg-white dark:bg-slate-800 px-4 py-1 rounded-full shadow-sm border border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200 tabular-nums transition-colors">
+                            {formatTime(elapsed)}
+                        </div>
+
+                        <button 
+                            onClick={startGame}
+                            className="p-2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-white dark:hover:bg-slate-800 rounded-full transition-all"
+                        >
+                            <ArrowCounterClockwiseIcon />
+                        </button>
+                    </header>
+
+                    <div className="mb-6 px-6 py-2 bg-white/60 dark:bg-slate-800/60 backdrop-blur-md rounded-full shadow-sm border border-white/50 dark:border-slate-700 text-lg font-medium text-slate-600 dark:text-slate-300 animate-pop transition-colors">
+                        {getInstructionText()}
+                    </div>
+
+                    <div className="flex-1 flex items-center justify-center w-full px-4 pb-12">
+                        <div 
+                            className="bg-white dark:bg-slate-900 p-3 rounded-3xl shadow-2xl shadow-slate-200/50 dark:shadow-black/50 border border-slate-100 dark:border-slate-800 relative transition-colors duration-300"
+                            style={{
+                                display: 'grid',
+                                gridTemplateColumns: `repeat(${gridSize}, 1fr)`,
+                                gap: gridSize > 8 ? '6px' : '10px', 
+                                width: '100%',
+                                maxWidth: '600px', 
+                                aspectRatio: '1/1',
+                            }}
+                        >
+                            <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-red-500/30 rounded-full transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0"></div>
+
+                            {cells.map((cell) => (
+                                <button
+                                    key={cell.id}
+                                    onClick={() => handleCellClick(cell)}
+                                    className={`
+                                        relative z-10
+                                        flex items-center justify-center
+                                        rounded-xl sm:rounded-2xl
+                                        font-semibold
+                                        bg-slate-50 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700
+                                        border border-slate-100 dark:border-slate-700
+                                        cell-shadow
+                                        select-none
+                                        outline-none
+                                        transition-colors duration-200
+                                        ${cell.color}
+                                        ${shakeId === cell.id ? 'animate-shake bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' : ''}
+                                    `}
+                                    style={{
+                                        fontSize: getDynamicFontSize()
+                                    }}
+                                >
+                                    {cell.value}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    
+                    <div className="pb-6 text-slate-400 dark:text-slate-600 text-xs font-medium uppercase tracking-widest opacity-60 transition-colors">
+                         Фокусуйте погляд у центрі
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
