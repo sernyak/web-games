@@ -201,6 +201,7 @@
             const [gameState, setGameState]   = useState('menu');
             const [gridSize, setGridSize]     = useState(5);
             const [isGorbov, setIsGorbov]     = useState(false);
+            const [isTrueGorbov, setIsTrueGorbov] = useState(false);
             const [isColorful, setIsColorful] = useState(false);
 
             const [isDark, setIsDark] = useState(() =>
@@ -212,7 +213,7 @@
             const [foundIds, setFoundIds]     = useState(new Set()); // ✅ NEW: track found cells
             const [successId, setSuccessId]   = useState(null);      // ✅ NEW: green-flash cell
 
-            const [gorbovState, setGorbovState] = useState({ color: 'black', number: 1 });
+            const [gorbovState, setGorbovState] = useState({ color: 'black', blackNumber: 1, redNumber: 1 });
 
             const [startTime, setStartTime] = useState(null);
             const [elapsed, setElapsed]     = useState(0);
@@ -248,7 +249,7 @@
 
             // -- Logic --
 
-            const getCurrentModeKey = () => isGorbov ? 'gorbov' : (isColorful ? 'colorful' : 'classic');
+            const getCurrentModeKey = () => isGorbov ? (isTrueGorbov ? 'gorbov-true' : 'gorbov') : (isColorful ? 'colorful' : 'classic');
 
             const saveResult = (finalTime) => {
                 const newRecord = {
@@ -313,7 +314,15 @@
             const startGame = () => {
                 generateGrid();
                 setNextTarget(1);
-                setGorbovState({ color: 'black', number: 1 });
+                
+                const totalCells = gridSize * gridSize;
+                const redCount = totalCells - Math.ceil(totalCells / 2);
+                setGorbovState({ 
+                    color: 'black', 
+                    blackNumber: 1, 
+                    redNumber: isTrueGorbov ? redCount : 1 
+                });
+                
                 setElapsed(0);
                 setFoundIds(new Set());
                 setSuccessId(null);
@@ -348,23 +357,31 @@
                         }
                     }
                 } else {
-                    if (cell.type === gorbovState.color && cell.value === gorbovState.number) {
+                    const targetNumber = gorbovState.color === 'black' ? gorbovState.blackNumber : gorbovState.redNumber;
+                    if (cell.type === gorbovState.color && cell.value === targetNumber) {
                         isCorrect = true;
                         const totalCells  = gridSize * gridSize;
                         const blackLimit  = Math.ceil(totalCells / 2);
-                        const redLimit    = totalCells - blackLimit;
+                        const redCount    = totalCells - blackLimit;
+                        
                         let nextColor  = gorbovState.color === 'black' ? 'red' : 'black';
-                        let nextNumber = gorbovState.number;
+                        let nextBlack = gorbovState.blackNumber;
+                        let nextRed = gorbovState.redNumber;
 
                         if (gorbovState.color === 'black') {
-                            if (gorbovState.number > redLimit) gameFinished = true;
-                            else nextColor = 'red';
+                            if (gorbovState.blackNumber === blackLimit && blackLimit > redCount) {
+                                gameFinished = true;
+                            } else {
+                                nextColor = 'red';
+                            }
                         } else {
-                            nextColor  = 'black';
-                            nextNumber = gorbovState.number + 1;
-                            if (nextNumber > blackLimit) gameFinished = true;
+                            nextColor = 'black';
+                            nextBlack++;
+                            if (isTrueGorbov) nextRed--; else nextRed++;
+                            if (nextBlack > blackLimit) gameFinished = true;
                         }
-                        if (!gameFinished) setGorbovState({ color: nextColor, number: nextNumber });
+                        
+                        if (!gameFinished) setGorbovState({ color: nextColor, blackNumber: nextBlack, redNumber: nextRed });
                     }
                 }
 
@@ -411,14 +428,16 @@
                 const colorClass = gorbovState.color === 'black'
                     ? 'text-slate-800 dark:text-slate-100'
                     : 'text-rose-600 dark:text-rose-400';
+                const targetNum = gorbovState.color === 'black' ? gorbovState.blackNumber : gorbovState.redNumber;
                 return (
-                    <span>Знайдіть: <span className={`font-bold ${colorClass}`}>{colorText} {gorbovState.number}</span></span>
+                    <span>Знайдіть: <span className={`font-bold ${colorClass}`}>{colorText} {targetNum}</span></span>
                 );
             };
 
             const getModeLabel = (mode) => {
                 switch (mode) {
-                    case 'gorbov':   return 'Горбов';
+                    case 'gorbov-true': return 'Горбов (Справжній)';
+                    case 'gorbov':   return 'Горбов (Спрощений)';
                     case 'colorful': return 'Кольоровий';
                     default:         return 'Класика';
                 }
@@ -488,6 +507,11 @@
                                         checked={isGorbov}
                                         onChange={(val) => { setIsGorbov(val); if (val) setIsColorful(false); }}
                                     />
+                                    {isGorbov && (
+                                        <div className="border-t border-slate-100 dark:border-slate-700 mt-1 pt-1 transition-colors">
+                                            <Toggle label="Справжній Горбов (Складно)" checked={isTrueGorbov} onChange={setIsTrueGorbov} />
+                                        </div>
+                                    )}
                                     {!isGorbov && (
                                         <div className="border-t border-slate-100 dark:border-slate-700 mt-1 pt-1 transition-colors">
                                             <Toggle label="Кольорові числа" checked={isColorful} onChange={setIsColorful} />
