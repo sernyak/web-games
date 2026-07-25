@@ -743,10 +743,10 @@
                         {isReady ? '👆 Натисніть будь-яке число, щоб почати' : getInstructionText()}
                     </div>
 
-                    {/* ✅ NEW: Progress bar (hidden while in 'ready') */}
-                    {!isReady && (
+                    {/* ProgressBar always rendered to prevent layout shift on first click */}
+                    <div style={{ visibility: isReady ? 'hidden' : 'visible' }}>
                         <ProgressBar current={nextTarget} total={totalCells} />
-                    )}
+                    </div>
 
                     <div className="flex-1 flex items-center justify-center w-full px-4 pb-12">
                         <div
