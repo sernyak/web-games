@@ -53,10 +53,22 @@
     <!-- Таймер -->
     <div class="timer fixed top-5 right-5 bg-gray-900 bg-opacity-50 text-white py-2 px-4 rounded-lg shadow-xl text-2xl font-semibold" id="timer"></div>
 
-    <!-- Кнопка "Стоп" в грі -->
-    <button id="stopButton" onclick="stopGame()" class="fixed top-5 left-5 bg-red-600 hover:bg-red-700 text-white py-2 px-6 rounded-lg shadow-xl text-lg font-bold transition-all duration-200 hidden z-20">
-        Стоп
-    </button>
+    <!-- Кнопки в грі -->
+    <div id="gameButtons" class="fixed top-5 left-5 flex gap-2 z-20 hidden">
+        <button id="stopButton" onclick="stopGame()" class="bg-red-600 hover:bg-red-700 text-white py-2 px-5 rounded-lg shadow-xl text-lg font-bold transition-all duration-200">
+            Стоп
+        </button>
+        <button id="pauseButton" onclick="togglePause()" class="bg-yellow-500 hover:bg-yellow-600 text-white py-2 px-5 rounded-lg shadow-xl text-lg font-bold transition-all duration-200">
+            Пауза
+        </button>
+    </div>
+
+    <!-- Оверлей паузи -->
+    <div id="pauseOverlay" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-40 hidden">
+        <button onclick="togglePause()" class="bg-blue-600 hover:bg-blue-700 text-white text-2xl font-bold py-4 px-10 rounded-2xl shadow-2xl transition-all duration-200">
+            ▶ Продовжити
+        </button>
+    </div>
 
     <!-- Модальне вікно налаштувань -->
     <div id="settings-overlay" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -145,6 +157,8 @@
         let timerInterval;
         let gameInterval;
         let animationTimeout;
+        let isPaused = false;
+        let timeLeft = 0;
 
         const letters = [
             'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Є', 'Ж', 'З', 'И', 'І', 'Ї', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ю', 'Я'
@@ -156,7 +170,9 @@
         const letterElement = document.getElementById('letter');
         const settingsOverlay = document.getElementById('settings-overlay');
         const timerElement = document.getElementById('timer');
-        const stopButton = document.getElementById('stopButton');
+        const gameButtons = document.getElementById('gameButtons');
+        const pauseButton = document.getElementById('pauseButton');
+        const pauseOverlay = document.getElementById('pauseOverlay');
         const gameBody = document.getElementById('game-body');
 
         // Встановлюємо початкові значення
@@ -241,15 +257,25 @@
 
             // 3. Ховаємо налаштування, показуємо гру
             settingsOverlay.style.display = 'none';
-            stopButton.style.display = 'block';
+            gameButtons.style.display = 'flex';
             timerElement.style.display = 'block';
+            isPaused = false;
+            pauseOverlay.style.display = 'none';
+            pauseButton.textContent = 'Пауза';
+
+            // 4a. Фуллскрін на мобільному
+            try {
+                const el = document.documentElement;
+                if (el.requestFullscreen) el.requestFullscreen();
+                else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+            } catch(e) {}
 
             // 4. Очищуємо старі інтервали
             clearInterval(gameInterval);
             clearInterval(timerInterval);
 
             // 5. Запускаємо таймер
-            let timeLeft = settings.duration;
+            timeLeft = settings.duration;
             timerElement.textContent = `${timeLeft} с`;
 
             timerInterval = setInterval(() => {
@@ -265,18 +291,53 @@
             gameInterval = setInterval(updateLetter, settings.speed);
         }
 
+        function togglePause() {
+            if (!isPaused) {
+                // Пауза
+                isPaused = true;
+                clearInterval(gameInterval);
+                clearInterval(timerInterval);
+                if (animationTimeout) clearTimeout(animationTimeout);
+                letterElement.classList.remove('letter-visible');
+                pauseOverlay.style.display = 'flex';
+                pauseButton.textContent = '▶';
+            } else {
+                // Продовжити
+                isPaused = false;
+                pauseOverlay.style.display = 'none';
+                pauseButton.textContent = 'Пауза';
+
+                timerInterval = setInterval(() => {
+                    timeLeft -= 1;
+                    timerElement.textContent = `${timeLeft} с`;
+                    if (timeLeft <= 0) stopGame();
+                }, 1000);
+
+                updateLetter();
+                gameInterval = setInterval(updateLetter, settings.speed);
+            }
+        }
+
         function stopGame() {
             // 1. Зупиняємо всі процеси
             clearInterval(gameInterval);
             clearInterval(timerInterval);
             if (animationTimeout) clearTimeout(animationTimeout);
+            isPaused = false;
 
             // 2. Ховаємо ігровий UI
-            stopButton.style.display = 'none';
+            gameButtons.style.display = 'none';
             timerElement.style.display = 'none';
             letterElement.classList.remove('letter-visible');
+            pauseOverlay.style.display = 'none';
 
-            // 3. Показуємо налаштування
+            // 3. Виходимо з фуллскріну
+            try {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+            } catch(e) {}
+
+            // 4. Показуємо налаштування
             settingsOverlay.style.display = 'flex';
         }
     </script>
