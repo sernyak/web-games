@@ -97,7 +97,6 @@
 
         /* Found cell style */
         .cell-found {
-            opacity: 0.28;
             pointer-events: none;
         }
 
@@ -782,7 +781,7 @@
                                             select-none outline-none
                                             cell-shadow
                                             ${isFound
-                                                ? 'cell-found bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700'
+                                                ? `cell-found bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 ${cell.color}`
                                                 : `bg-slate-50 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 border border-slate-100 dark:border-slate-700 ${cell.color}`
                                             }
                                             ${isSuccess ? (isDark ? 'animate-success-dark' : 'animate-success-light') : ''}
@@ -790,13 +789,7 @@
                                         `}
                                         style={{ fontSize: getDynamicFontSize() }}
                                     >
-                                        {/* ✅ NEW: check mark overlay on found cells */}
-                                        {isFound ? (
-                                            <i className="ph ph-check-circle text-green-400/50 dark:text-green-500/40"
-                                               style={{ fontSize: getDynamicFontSize() }}></i>
-                                        ) : (
-                                            cell.value
-                                        )}
+                                        {cell.value}
                                     </button>
                                 );
                             })}
