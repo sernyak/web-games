@@ -226,11 +226,16 @@
                 const elHeight = letterElement.offsetHeight; // Використовуємо offsetHeight для кращої точності
                 const elWidth = letterElement.offsetWidth;   // Використовуємо offsetWidth
 
+                // Не даємо літері з'являтися під кнопками (Старт/Пауза/Стоп) чи таймером зверху екрана
+                const buttonsBottom = gameButtons.getBoundingClientRect().bottom;
+                const timerBottom = timerElement.getBoundingClientRect().bottom;
+                const minTop = Math.max(20, buttonsBottom, timerBottom) + 20;
+
                 // Переконуємось, що максимальне значення не від'ємне, якщо елемент більший за екран
-                const maxTop = Math.max(0, vpHeight - elHeight - 40);
+                const maxTop = Math.max(minTop, vpHeight - elHeight - 40);
                 const maxLeft = Math.max(0, vpWidth - elWidth - 40);
 
-                letterElement.style.top = (Math.random() * maxTop) + 20 + 'px';
+                letterElement.style.top = (Math.random() * (maxTop - minTop) + minTop) + 'px';
                 letterElement.style.left = (Math.random() * maxLeft) + 20 + 'px';
                 
                 // 7. Показуємо літеру з анімацією
