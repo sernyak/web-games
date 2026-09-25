@@ -100,26 +100,76 @@
 
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* Chart tokens (statistics) — light values, dark overrides below */
+        :root {
+            --viz-surface: #ffffff;
+            --viz-grid:    #e2e8f0;
+            --viz-axis:    #cbd5e1;
+            --viz-muted:   #64748b;
+            --viz-ink:     #0f172a;
+            --viz-ink-2:   #475569;
+            --viz-accent:  #2a78d6;
+            --viz-wash:    rgba(42, 120, 214, 0.12);
+            --viz-deemph:  #cbd5e1;
+            --viz-lapse:   #f59e0b;
+            --viz-ref:     #64748b;
+            --heat-0: #eef2f6;
+            --heat-1: #86b6ef;
+            --heat-2: #5598e7;
+            --heat-3: #256abf;
+            --heat-4: #104281;
+        }
+        html.dark {
+            --viz-surface: #1e293b;
+            --viz-grid:    #334155;
+            --viz-axis:    #475569;
+            --viz-muted:   #94a3b8;
+            --viz-ink:     #f8fafc;
+            --viz-ink-2:   #cbd5e1;
+            --viz-accent:  #3987e5;
+            --viz-wash:    rgba(57, 135, 229, 0.18);
+            --viz-deemph:  #475569;
+            --viz-lapse:   #fbbf24;
+            --viz-ref:     #94a3b8;
+            --heat-0: #273449;
+            --heat-1: #1c5cab;
+            --heat-2: #2a78d6;
+            --heat-3: #5598e7;
+            --heat-4: #9ec5f4;
+        }
+        .viz-tooltip {
+            position: absolute;
+            pointer-events: none;
+            z-index: 20;
+            background: var(--viz-surface);
+            color: var(--viz-ink);
+            border: 1px solid var(--viz-grid);
+            border-radius: 10px;
+            padding: 6px 10px;
+            font-size: 12px;
+            line-height: 1.35;
+            white-space: nowrap;
+            box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+        }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback, useRef } = React;
+        const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
         // --- Icons ---
-        const PlayIcon          = () => <i className="ph ph-play-fill text-xl"></i>;
+        const PlayIcon          = () => <i className="ph-fill ph-play text-xl"></i>;
         const RestartIcon       = () => <i className="ph ph-arrow-counter-clockwise text-xl"></i>;
         const CheckIcon         = () => <i className="ph ph-check text-xl"></i>;
-        const ClockIcon         = () => <i className="ph ph-clock-counter-clockwise text-xl"></i>;
         const TrashIcon         = () => <i className="ph ph-trash text-lg"></i>;
         const CaretLeftIcon     = () => <i className="ph ph-caret-left text-xl"></i>;
         const SunIcon           = () => <i className="ph ph-sun text-xl"></i>;
         const MoonIcon          = () => <i className="ph ph-moon text-xl"></i>;
-        const TrophyIcon        = () => <i className="ph ph-trophy-fill text-2xl"></i>;
-        const TrophySimpleIcon  = () => <i className="ph ph-trophy-fill text-lg"></i>;
-        const ChartBarIcon      = () => <i className="ph ph-chart-bar text-lg"></i>;
+        const TrophyIcon        = () => <i className="ph-fill ph-trophy text-2xl"></i>;
+        const ChartIcon         = () => <i className="ph ph-chart-line-up text-xl"></i>;
 
         // --- Components ---
 
@@ -160,36 +210,942 @@
             );
         };
 
-        // ✅ NEW: Stats card for history
-        const StatsCard = ({ records }) => {
-            if (!records || records.length === 0) return null;
-            const avg = records.reduce((s, r) => s + r.time, 0) / records.length;
-            const best = Math.min(...records.map(r => r.time));
-            const formatTime = (s) => {
-                const mins = Math.floor(s / 60);
-                const secs = Math.floor(s % 60);
-                const ms   = Math.floor((s % 1) * 100);
-                return `${mins > 0 ? mins + ':' : ''}${secs < 10 && mins > 0 ? '0' : ''}${secs}.${ms < 10 ? '0' : ''}${ms}`;
-            };
+        // --- Stats: storage & helpers ---
+
+        const HISTORY_KEY   = 'schulte_history';
+        const HISTORY_LIMIT = 5000;
+        const NORM_WINDOW   = 30; // games used for the personal norm
+        const NORM_MIN      = 5;  // games needed before the norm is shown
+
+        const loadHistory = () => {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+                return Array.isArray(parsed) ? parsed : [];
+            } catch {
+                return [];
+            }
+        };
+
+        const persistHistory = (list) => {
+            try {
+                localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+            } catch {
+                // Storage full: drop per-step splits from the older half and retry
+                const half = Math.floor(list.length / 2);
+                const slim = list.map((r, i) => (i >= half ? { ...r, splits: undefined } : r));
+                try { localStorage.setItem(HISTORY_KEY, JSON.stringify(slim)); } catch {}
+            }
+        };
+
+        const formatTime = (seconds) => {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            const ms   = Math.floor((seconds % 1) * 100);
+            return `${mins > 0 ? mins + ':' : ''}${secs < 10 && mins > 0 ? '0' : ''}${secs}.${ms < 10 ? '0' : ''}${ms}`;
+        };
+
+        const getModeLabel = (mode) => {
+            switch (mode) {
+                case 'gorbov-true': return 'Горбов (Справжній)';
+                case 'gorbov':   return 'Горбов (Спрощений)';
+                case 'colorful': return 'Кольоровий';
+                default:         return 'Класика';
+            }
+        };
+
+        const MODE_OPTIONS = [
+            { key: 'classic',     label: 'Класика' },
+            { key: 'colorful',    label: 'Кольоровий' },
+            { key: 'gorbov',      label: 'Горбов (Спрощений)' },
+            { key: 'gorbov-true', label: 'Горбов (Справжній)' },
+        ];
+        const GRID_SIZES = [3, 4, 5, 6, 7, 8, 9, 10];
+        const PERIODS = [
+            { days: 7,  label: '7 дн' },
+            { days: 30, label: '30 дн' },
+            { days: 90, label: '90 дн' },
+            { days: 0,  label: 'Усе' },
+        ];
+
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        const pad2 = (n) => String(n).padStart(2, '0');
+
+        // Local calendar day as 'YYYY-MM-DD' (sorts correctly as a string)
+        const dayKey = (date) => {
+            const d = new Date(date);
+            return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+        };
+        const keyToDate = (key) => {
+            const [y, m, d] = key.split('-').map(Number);
+            return new Date(y, m - 1, d);
+        };
+        const addDays = (date, n) => {
+            const d = new Date(date);
+            d.setDate(d.getDate() + n);
+            return d;
+        };
+
+        const median = (arr) => {
+            if (!arr.length) return null;
+            const s = [...arr].sort((a, b) => a - b);
+            const m = Math.floor(s.length / 2);
+            return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        };
+        const mean = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+        const pluralUk = (n, [one, few, many]) => {
+            const m10 = n % 10, m100 = n % 100;
+            if (m10 === 1 && m100 !== 11) return one;
+            if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+            return many;
+        };
+        const GAMES_WORDS = ['гра', 'гри', 'ігор'];
+        const DAYS_WORDS  = ['день', 'дні', 'днів'];
+
+        const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+        const intlFormat = (date, opts) => new Intl.DateTimeFormat('uk-UA', opts).format(date);
+        const dayLabel   = (key) => capitalize(intlFormat(keyToDate(key), { weekday: 'short', day: 'numeric', month: 'short' }));
+        const shortDate  = (key) => intlFormat(keyToDate(key), { day: 'numeric', month: 'short' });
+        const clockTime  = (iso) => intlFormat(new Date(iso), { hour: '2-digit', minute: '2-digit' });
+
+        const recordDay = (r) => r.day || dayKey(r.date);
+        const errorsAvg = (records) => mean(records.filter(r => typeof r.errors === 'number').map(r => r.errors));
+
+        // Until this deploy the timer started on the first click (the grid could be scanned first),
+        // so older times are shown in the log but excluded from norms, records and trends.
+        const TIMER_FIX_AT = Date.parse('2026-09-25T09:11:00Z');
+        const isLegacy = (r) => Date.parse(r.date) < TIMER_FIX_AT;
+        const LEGACY_HINT = 'До 25 вересня час рахувався з першого кліку, а не з появи таблиці';
+
+        // "Lapse" = a step that took more than twice the game's typical step.
+        // The first step is excluded: it includes orienting on a fresh grid.
+        const countLapses = (splits) => {
+            if (!Array.isArray(splits) || splits.length < 4) return null;
+            const typical = median(splits.slice(1));
+            return splits.slice(1).filter(s => s > typical * 2).length;
+        };
+
+        // Personal norm: median of the last NORM_WINDOW games played before the given day.
+        // Records are newest-first. Today is excluded so today's state is measured against it.
+        const getNorm = (records, beforeKey) => {
+            const prior = records.filter(r => !isLegacy(r) && recordDay(r) < beforeKey).slice(0, NORM_WINDOW);
+            if (prior.length < NORM_MIN) return { value: null, count: prior.length, errors: null };
+            return { value: median(prior.map(r => r.time)), count: prior.length, errors: errorsAvg(prior) };
+        };
+
+        const computeStreaks = (countsByDay, todayKey) => {
+            // Current streak counts back from today, or from yesterday if today has no games yet
+            let cursor = keyToDate(todayKey);
+            if (!countsByDay.has(todayKey)) cursor = addDays(cursor, -1);
+            let current = 0;
+            while (countsByDay.has(dayKey(cursor))) {
+                current++;
+                cursor = addDays(cursor, -1);
+            }
+            let best = 0, run = 0, prevKey = null;
+            [...countsByDay.keys()].sort().forEach(key => {
+                run = prevKey && dayKey(addDays(keyToDate(prevKey), 1)) === key ? run + 1 : 1;
+                best = Math.max(best, run);
+                prevKey = key;
+            });
+            return { current, best };
+        };
+
+        // State bands by deviation from the personal norm (% of time; negative = faster)
+        const STATE_BANDS = [
+            { max: -7, label: 'У ресурсі', icon: 'ph-lightning',
+              hint: 'Висока зібраність — гарний момент для складної роботи.',
+              cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+            { max: 7, label: 'У нормі', icon: 'ph-check-circle',
+              hint: 'Звичний для вас рівень уваги.',
+              cls: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200' },
+            { max: 20, label: 'Знижена концентрація', icon: 'ph-warning',
+              hint: 'Увага працює гірше, ніж зазвичай. Можливо, варто зробити паузу.',
+              cls: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+            { max: Infinity, label: 'Втома / розфокус', icon: 'ph-battery-low',
+              hint: 'Схоже, ресурсу зараз мало — відпочинок буде кориснішим за тренування.',
+              cls: 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300' },
+        ];
+        const deviationPct = (value, norm) => ((value - norm) / norm) * 100;
+        const bandFor = (pct) => STATE_BANDS.find(b => pct <= b.max);
+        const formatPct = (pct) => {
+            const r = Math.round(pct);
+            return `${r > 0 ? '+' : r < 0 ? '−' : ''}${Math.abs(r)}%`;
+        };
+        const describePct = (pct) => {
+            const r = Math.round(pct);
+            if (r === 0) return 'точно на рівні вашої норми';
+            return `на ${Math.abs(r)}% ${r < 0 ? 'швидше' : 'повільніше'} за вашу норму`;
+        };
+
+        // "Nice" axis ticks around [lo, hi]
+        const niceScale = (lo, hi, count = 4) => {
+            if (lo === hi) { lo -= 1; hi += 1; }
+            const raw = (hi - lo) / count;
+            const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+            const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw);
+            const min = Math.floor(lo / step) * step;
+            const max = Math.ceil(hi / step) * step;
+            const ticks = [];
+            for (let v = min; v <= max + step / 2; v += step) ticks.push(+v.toFixed(6));
+            return { min, max, ticks };
+        };
+        const formatTick = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+
+        // Bar path with a 4px rounded data-end and a square baseline
+        const topRoundedBar = (x, y, w, h, r) => {
+            r = Math.min(r, w / 2, h);
+            return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+        };
+
+        const useElementWidth = () => {
+            const ref = useRef(null);
+            const [width, setWidth] = useState(0);
+            useEffect(() => {
+                if (!ref.current) return;
+                const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+                ro.observe(ref.current);
+                return () => ro.disconnect();
+            }, []);
+            return [ref, width];
+        };
+
+        // --- Stats: components ---
+
+        const Card = ({ title, subtitle, children }) => (
+            <section className="bg-white dark:bg-slate-800 rounded-3xl p-5 border border-slate-100 dark:border-slate-700 shadow-sm transition-colors">
+                {title && (
+                    <div className="mb-4">
+                        <h3 className="text-sm font-semibold text-slate-800 dark:text-white">{title}</h3>
+                        {subtitle && <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{subtitle}</p>}
+                    </div>
+                )}
+                {children}
+            </section>
+        );
+
+        const Tile = ({ label, value, sub, mono = false, valueClass = '' }) => (
+            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-700/60 min-w-0 transition-colors">
+                <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1 truncate">{label}</p>
+                <p className={`text-lg font-bold leading-tight ${valueClass || 'text-slate-800 dark:text-white'} ${mono ? 'font-mono' : ''}`}>{value}</p>
+                {sub && <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 truncate">{sub}</p>}
+            </div>
+        );
+
+        const StateChip = ({ pct, text }) => {
+            const band = bandFor(pct);
             return (
-                <div className="grid grid-cols-3 gap-2 mb-5">
-                    {[
-                        { label: 'Ігри', value: records.length, mono: false },
-                        { label: 'Середній', value: formatTime(avg), mono: true },
-                        { label: 'Рекорд', value: formatTime(best), mono: true },
-                    ].map(({ label, value, mono }) => (
-                        <div key={label} className="bg-white dark:bg-slate-800 rounded-2xl p-3 text-center border border-slate-100 dark:border-slate-700 transition-colors">
-                            <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">{label}</p>
-                            <p className={`text-base font-bold text-slate-800 dark:text-white ${mono ? 'font-mono' : ''}`}>{value}</p>
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${band.cls}`} title={band.label}>
+                    <i className={`ph ${band.icon}`}></i>
+                    {text || formatPct(pct)}
+                </span>
+            );
+        };
+
+        const LegendKey = ({ kind, color, label }) => (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                {kind === 'line' && <span style={{ width: 14, height: 2, borderRadius: 1, background: color }} />}
+                {kind === 'dash' && <span style={{ width: 14, borderTop: `1px dashed ${color}` }} />}
+                {kind === 'box' && <span style={{ width: 10, height: 10, borderRadius: 3, background: color }} />}
+                {kind === 'ring' && <span style={{ width: 9, height: 9, borderRadius: '50%', border: `2px solid ${color}` }} />}
+                {label}
+            </span>
+        );
+
+        const HEAT_BINS = ['немає', '1 гра', '2–3 гри', '4–6 ігор', '7+ ігор'];
+        const heatLevel = (n) => (n === 0 ? 0 : n === 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4);
+
+        // Calendar of practice days (GitHub-style), weeks as columns, Monday first
+        const CalendarHeatmap = ({ countsByDay, todayKey }) => {
+            const [ref, width] = useElementWidth();
+            const [tip, setTip] = useState(null);
+            const CELL = 13, GAP = 3, STEP = CELL + GAP, LEFT = 22, TOP = 16;
+            const weeks = clamp(Math.floor((width - LEFT + GAP) / STEP), 8, 26);
+            const today = keyToDate(todayKey);
+            const firstMonday = addDays(today, -((today.getDay() + 6) % 7) - (weeks - 1) * 7);
+
+            const cells = [];
+            for (let w = 0; w < weeks; w++) {
+                for (let d = 0; d < 7; d++) {
+                    const date = addDays(firstMonday, w * 7 + d);
+                    if (date > today) continue;
+                    const key = dayKey(date);
+                    cells.push({ key, w, d, count: countsByDay.get(key) || 0 });
+                }
+            }
+
+            // Month labels where the week's Monday enters a new month; skip the first if it would collide
+            const changeCols = [];
+            for (let w = 1; w < weeks; w++) {
+                if (addDays(firstMonday, w * 7).getMonth() !== addDays(firstMonday, (w - 1) * 7).getMonth()) changeCols.push(w);
+            }
+            const labelCols = (changeCols[0] ?? weeks) >= 3 ? [0, ...changeCols] : changeCols;
+
+            const svgW = LEFT + weeks * STEP - GAP;
+            const svgH = TOP + 7 * STEP - GAP;
+
+            return (
+                <div ref={ref} className="relative w-full">
+                    {width > 0 && (
+                        <svg width={svgW} height={svgH} style={{ display: 'block' }}
+                             onPointerLeave={(e) => { if (e.pointerType === 'mouse') setTip(null); }}>
+                            {labelCols.map(w => (
+                                <text key={w} x={LEFT + w * STEP} y={10} fontSize="10" fill="var(--viz-muted)">
+                                    {intlFormat(addDays(firstMonday, w * 7), { month: 'short' })}
+                                </text>
+                            ))}
+                            {[['Пн', 0], ['Ср', 2], ['Пт', 4]].map(([label, d]) => (
+                                <text key={label} x={0} y={TOP + d * STEP + CELL / 2} dy="0.35em" fontSize="10" fill="var(--viz-muted)">{label}</text>
+                            ))}
+                            {cells.map(c => (
+                                <rect
+                                    key={c.key}
+                                    x={LEFT + c.w * STEP} y={TOP + c.d * STEP}
+                                    width={CELL} height={CELL} rx="3"
+                                    fill={`var(--heat-${heatLevel(c.count)})`}
+                                    stroke={c.key === todayKey ? 'var(--viz-ink-2)' : (tip && tip.key === c.key ? 'var(--viz-muted)' : 'none')}
+                                    strokeWidth="1.5"
+                                    onPointerEnter={() => setTip(c)}
+                                    onPointerDown={() => setTip(c)}
+                                />
+                            ))}
+                        </svg>
+                    )}
+                    {tip && (
+                        <div className="viz-tooltip" style={{
+                            left: clamp(LEFT + tip.w * STEP + CELL / 2, 70, Math.max(width - 70, 70)),
+                            top: TOP + tip.d * STEP - 6,
+                            transform: 'translate(-50%, -100%)',
+                        }}>
+                            <div style={{ fontWeight: 600 }}>
+                                {tip.count ? `${tip.count} ${pluralUk(tip.count, GAMES_WORDS)}` : 'Без тренування'}
+                            </div>
+                            <div style={{ color: 'var(--viz-muted)' }}>{dayLabel(tip.key)}</div>
+                        </div>
+                    )}
+                    <div className="flex items-center gap-1.5 mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+                        <span>Менше</span>
+                        {HEAT_BINS.map((label, i) => (
+                            <span key={label} title={label} style={{ width: 11, height: 11, borderRadius: 3, background: `var(--heat-${i})` }} />
+                        ))}
+                        <span>Більше</span>
+                    </div>
+                </div>
+            );
+        };
+
+        // Daily median time with best–worst band and the personal norm as a reference line
+        const TrendChart = ({ days, norm, startKey, endKey }) => {
+            const [ref, width] = useElementWidth();
+            const [hover, setHover] = useState(null);
+            const H = 210, M = { top: 14, right: 12, bottom: 26, left: 34 };
+            const innerW = Math.max(width - M.left - M.right, 1);
+            const innerH = H - M.top - M.bottom;
+
+            const t0 = keyToDate(startKey).getTime();
+            const t1 = Math.max(keyToDate(endKey).getTime(), t0 + DAY_MS);
+            const x = (key) => M.left + ((keyToDate(key).getTime() - t0) / (t1 - t0)) * innerW;
+
+            const values = days.flatMap(d => [d.best, d.worst]);
+            if (norm) values.push(norm);
+            const scale = niceScale(Math.min(...values), Math.max(...values));
+            const y = (v) => M.top + (1 - (v - scale.min) / (scale.max - scale.min)) * innerH;
+
+            const xTicks = [...new Set([0, 1, 2, 3].map(i => dayKey(new Date(t0 + ((t1 - t0) * i) / 3))))];
+            const linePath = days.map((d, i) => `${i ? 'L' : 'M'}${x(d.key)},${y(d.median)}`).join('');
+            const bandPath = days.length > 1
+                ? days.map((d, i) => `${i ? 'L' : 'M'}${x(d.key)},${y(d.best)}`).join('')
+                  + [...days].reverse().map(d => `L${x(d.key)},${y(d.worst)}`).join('') + 'Z'
+                : null;
+
+            // Crosshair snaps to the nearest day
+            const handleMove = (e) => {
+                const px = e.clientX - e.currentTarget.getBoundingClientRect().left;
+                let nearest = 0;
+                days.forEach((d, i) => {
+                    if (Math.abs(x(d.key) - px) < Math.abs(x(days[nearest].key) - px)) nearest = i;
+                });
+                setHover(nearest);
+            };
+
+            const hd = hover !== null ? days[hover] : null;
+            const hx = hd ? x(hd.key) : 0;
+
+            return (
+                <div ref={ref} className="relative w-full" style={{ height: H }}>
+                    {width > 0 && (
+                        <svg width={width} height={H} style={{ display: 'block', touchAction: 'pan-y' }}
+                             onPointerMove={handleMove} onPointerDown={handleMove}
+                             onPointerLeave={(e) => { if (e.pointerType === 'mouse') setHover(null); }}>
+                            {scale.ticks.map(t => (
+                                <g key={t}>
+                                    <line x1={M.left} x2={width - M.right} y1={y(t)} y2={y(t)} stroke="var(--viz-grid)" strokeWidth="1" />
+                                    <text x={M.left - 8} y={y(t)} dy="0.32em" textAnchor="end" fontSize="11" fill="var(--viz-muted)"
+                                          style={{ fontVariantNumeric: 'tabular-nums' }}>{formatTick(t)}</text>
+                                </g>
+                            ))}
+                            {xTicks.map((k, i) => (
+                                <text key={k} x={x(k)} y={H - 6} fontSize="11" fill="var(--viz-muted)"
+                                      textAnchor={i === 0 ? 'start' : i === xTicks.length - 1 ? 'end' : 'middle'}>{shortDate(k)}</text>
+                            ))}
+                            {bandPath && <path d={bandPath} fill="var(--viz-wash)" />}
+                            {norm && (
+                                <g>
+                                    <line x1={M.left} x2={width - M.right} y1={y(norm)} y2={y(norm)} stroke="var(--viz-ref)" strokeWidth="1" strokeDasharray="4 4" />
+                                    <text x={width - M.right} y={y(norm) - 5} textAnchor="end" fontSize="11" fill="var(--viz-muted)"
+                                          stroke="var(--viz-surface)" strokeWidth="3" strokeLinejoin="round" paintOrder="stroke">норма {formatTime(norm)}</text>
+                                </g>
+                            )}
+                            <path d={linePath} fill="none" stroke="var(--viz-accent)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+                            {hd && <line x1={hx} x2={hx} y1={M.top} y2={H - M.bottom} stroke="var(--viz-axis)" strokeWidth="1" />}
+                            {days.map((d, i) => (days.length <= 45 || i === hover || d.legacy) && (
+                                d.legacy
+                                    ? <circle key={d.key} cx={x(d.key)} cy={y(d.median)} r={i === hover ? 4.5 : 3.5}
+                                              fill="var(--viz-surface)" stroke="var(--viz-accent)" strokeWidth="2" />
+                                    : <circle key={d.key} cx={x(d.key)} cy={y(d.median)} r={i === hover ? 5 : 4}
+                                              fill="var(--viz-accent)" stroke="var(--viz-surface)" strokeWidth="2" />
+                            ))}
+                        </svg>
+                    )}
+                    {hd && (
+                        <div className="viz-tooltip" style={{ top: 0, ...(hx > width / 2 ? { right: width - hx + 10 } : { left: hx + 10 }) }}>
+                            <div style={{ color: 'var(--viz-muted)' }}>{dayLabel(hd.key)}</div>
+                            <div className="font-mono" style={{ fontSize: 14, fontWeight: 700 }}>
+                                {formatTime(hd.median)} <span className="font-sans" style={{ fontSize: 11, fontWeight: 400, color: 'var(--viz-muted)' }}>медіана</span>
+                            </div>
+                            <div style={{ color: 'var(--viz-ink-2)' }}>
+                                краща {formatTime(hd.best)} · {hd.count} {pluralUk(hd.count, GAMES_WORDS)}
+                            </div>
+                            {hd.errors !== null && (
+                                <div style={{ color: 'var(--viz-ink-2)' }}>помилок на гру: {hd.errors.toFixed(1)}</div>
+                            )}
+                            {hd.legacy && <div style={{ color: 'var(--viz-muted)' }}>старий відлік (з першого кліку)</div>}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // Time per step within one game; steps over 2× the typical pace are highlighted as lapses
+        const SplitsChart = ({ splits, stepLabel }) => {
+            const [ref, width] = useElementWidth();
+            const [hover, setHover] = useState(null);
+            const H = 64;
+            const n = splits.length;
+            const slot = width / n;
+            const gap = slot >= 8 ? 2 : slot >= 4 ? 1 : 0;
+            const barW = Math.min(24, Math.max(slot - gap, 1));
+            const max = Math.max(...splits);
+            const typical = n >= 4 ? median(splits.slice(1)) : Infinity;
+            const isLapse = (s, i) => i > 0 && s > typical * 2;
+
+            const handleMove = (e) => {
+                const i = Math.floor((e.clientX - e.currentTarget.getBoundingClientRect().left) / slot);
+                setHover(clamp(i, 0, n - 1));
+            };
+
+            return (
+                <div>
+                    <div ref={ref} className="relative w-full" style={{ height: H }}>
+                        {width > 0 && (
+                            <svg width={width} height={H} style={{ display: 'block', touchAction: 'pan-y' }}
+                                 onPointerMove={handleMove} onPointerDown={handleMove}
+                                 onPointerLeave={(e) => { if (e.pointerType === 'mouse') setHover(null); }}>
+                                {splits.map((s, i) => {
+                                    const h = Math.max(2, (s / max) * (H - 4));
+                                    return (
+                                        <path key={i}
+                                              d={topRoundedBar(i * slot + (slot - barW) / 2, H - h, barW, h, 4)}
+                                              fill={isLapse(s, i) ? 'var(--viz-lapse)' : 'var(--viz-accent)'}
+                                              opacity={hover === null || hover === i ? 1 : 0.5} />
+                                    );
+                                })}
+                                <line x1={0} x2={width} y1={H - 0.5} y2={H - 0.5} stroke="var(--viz-axis)" strokeWidth="1" />
+                            </svg>
+                        )}
+                        {hover !== null && (
+                            <div className="viz-tooltip" style={{
+                                left: clamp(hover * slot + slot / 2, 60, Math.max(width - 60, 60)),
+                                top: -8, transform: 'translate(-50%, -100%)',
+                            }}>
+                                <span className="font-mono" style={{ fontWeight: 700 }}>{(splits[hover] / 100).toFixed(2)} с</span>
+                                <span style={{ color: 'var(--viz-muted)' }}> · {stepLabel(hover)}{isLapse(splits[hover], hover) ? ' · зависання' : ''}</span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 justify-center">
+                        <LegendKey kind="box" color="var(--viz-accent)" label="час на крок" />
+                        <LegendKey kind="box" color="var(--viz-lapse)" label="зависання (удвічі довше за ваш темп)" />
+                    </div>
+                </div>
+            );
+        };
+
+        const DAYPARTS = [
+            { key: 'morning', label: 'Ранок', range: '05–12', test: h => h >= 5 && h < 12 },
+            { key: 'day',     label: 'День',  range: '12–17', test: h => h >= 12 && h < 17 },
+            { key: 'evening', label: 'Вечір', range: '17–22', test: h => h >= 17 && h < 22 },
+            { key: 'night',   label: 'Ніч',   range: '22–05', test: h => h >= 22 || h < 5 },
+        ];
+
+        // Median time by time of day; the fastest part of the day is emphasized
+        const DaypartBars = ({ records }) => {
+            const rows = DAYPARTS
+                .map(p => {
+                    const rs = records.filter(r => p.test(new Date(r.date).getHours()));
+                    return { ...p, count: rs.length, median: median(rs.map(r => r.time)) };
+                })
+                .filter(r => r.count >= 2);
+
+            if (rows.length < 2) {
+                return <p className="text-sm text-slate-400 dark:text-slate-500">Грайте в різний час доби — тут з'явиться, коли ваша увага найсильніша.</p>;
+            }
+            const max = Math.max(...rows.map(r => r.median));
+            const fastest = Math.min(...rows.map(r => r.median));
+
+            return (
+                <div className="space-y-3">
+                    {rows.map(r => (
+                        <div key={r.key} className="flex items-center gap-3">
+                            <div className="w-16 shrink-0">
+                                <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{r.label}</p>
+                                <p className="text-[11px] text-slate-400 dark:text-slate-500 tabular-nums">{r.range}</p>
+                            </div>
+                            <div className="flex-1 h-2.5">
+                                <div className="h-full" style={{
+                                    width: `${(r.median / max) * 100}%`,
+                                    background: r.median === fastest ? 'var(--viz-accent)' : 'var(--viz-deemph)',
+                                    borderRadius: '0 4px 4px 0',
+                                }} />
+                            </div>
+                            <div className="w-20 shrink-0 text-right">
+                                <p className="text-sm font-mono font-semibold text-slate-800 dark:text-slate-100">{formatTime(r.median)}</p>
+                                <p className="text-[11px] text-slate-400 dark:text-slate-500">{r.count} {pluralUk(r.count, GAMES_WORDS)}</p>
+                            </div>
                         </div>
                     ))}
                 </div>
             );
         };
 
+        // Day-by-day log; each day is compared with the norm as it was before that day
+        const DayJournal = ({ days, normByDay, bestId }) => {
+            const [open, setOpen] = useState(() => new Set(days.length ? [days[0].key] : []));
+            const [limit, setLimit] = useState(14);
+            const toggle = (key) => setOpen(prev => {
+                const next = new Set(prev);
+                next.has(key) ? next.delete(key) : next.add(key);
+                return next;
+            });
+
+            return (
+                <div className="space-y-2">
+                    {days.slice(0, limit).map(day => {
+                        const norm = normByDay.get(day.key);
+                        const isOpen = open.has(day.key);
+                        return (
+                            <div key={day.key} className="rounded-2xl border border-slate-100 dark:border-slate-700 overflow-hidden">
+                                <button
+                                    onClick={() => toggle(day.key)}
+                                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors"
+                                >
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{dayLabel(day.key)}</p>
+                                        <p className="text-xs text-slate-400 dark:text-slate-500">
+                                            {day.count} {pluralUk(day.count, GAMES_WORDS)} · краща {formatTime(day.best)}
+                                            {day.hasLegacy && <span title={LEGACY_HINT}> · старий відлік</span>}
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {!day.hasLegacy && norm && <StateChip pct={deviationPct(day.median, norm)} />}
+                                        <span className="font-mono font-semibold text-slate-900 dark:text-white">{formatTime(day.median)}</span>
+                                        <i className={`ph ph-caret-down text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}></i>
+                                    </div>
+                                </button>
+                                {isOpen && (
+                                    <div className="border-t border-slate-100 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700/60">
+                                        {day.records.map(r => {
+                                            const lapses = countLapses(r.splits);
+                                            return (
+                                                <div key={r.id} className="flex items-center gap-3 px-4 py-2 text-sm">
+                                                    <span className="text-slate-400 dark:text-slate-500 tabular-nums w-11 shrink-0">{clockTime(r.date)}</span>
+                                                    <span className="flex-1 text-xs text-slate-500 dark:text-slate-400">
+                                                        {isLegacy(r)
+                                                            ? <span title={LEGACY_HINT}>старий відлік · з першого кліку</span>
+                                                            : `помилок ${r.errors ?? '—'} · зависань ${lapses ?? '—'}`}
+                                                    </span>
+                                                    <span className="font-mono font-medium text-slate-800 dark:text-slate-100 flex items-center gap-1">
+                                                        {r.id === bestId && <i className="ph-fill ph-trophy text-amber-500" title="Рекорд"></i>}
+                                                        {formatTime(r.time)}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                    {days.length > limit && (
+                        <button
+                            onClick={() => setLimit(l => l + 14)}
+                            className="w-full py-2.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors"
+                        >
+                            Показати ще
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+        const StatsScreen = ({ history, initialMode, initialSize, onBack, onImport, onClear }) => {
+            const [mode, setMode]     = useState(initialMode);
+            const [size, setSize]     = useState(initialSize);
+            const [period, setPeriod] = useState(30);
+            const fileRef = useRef(null);
+            const todayKey = dayKey(new Date());
+
+            // Regularity is about the habit, so it counts every mode and size
+            const regularity = useMemo(() => {
+                const countsByDay = new Map();
+                history.forEach(r => {
+                    const k = dayKey(r.date);
+                    countsByDay.set(k, (countsByDay.get(k) || 0) + 1);
+                });
+                const since = dayKey(addDays(keyToDate(todayKey), -29));
+                return {
+                    countsByDay,
+                    ...computeStreaks(countsByDay, todayKey),
+                    activeDays30: [...countsByDay.keys()].filter(k => k >= since).length,
+                    today: countsByDay.get(todayKey) || 0,
+                };
+            }, [history, todayKey]);
+
+            const modeCounts = useMemo(() => {
+                const m = {};
+                history.forEach(r => { m[r.mode] = (m[r.mode] || 0) + 1; });
+                return m;
+            }, [history]);
+            const sizeCounts = useMemo(() => {
+                const m = {};
+                history.forEach(r => { if (r.mode === mode) m[r.gridSize] = (m[r.gridSize] || 0) + 1; });
+                return m;
+            }, [history, mode]);
+
+            // Performance is only comparable within one mode and grid size
+            const ctx = useMemo(() => {
+                const records = history
+                    .filter(r => r.mode === mode && r.gridSize === size)
+                    .map(r => ({ ...r, day: dayKey(r.date) })); // newest-first
+                const startKey = period
+                    ? dayKey(addDays(keyToDate(todayKey), -(period - 1)))
+                    : (records.length ? records[records.length - 1].day : todayKey);
+                const inPeriod = records.filter(r => r.day >= startKey);
+
+                const groups = new Map();
+                inPeriod.forEach(r => {
+                    if (!groups.has(r.day)) groups.set(r.day, []);
+                    groups.get(r.day).push(r);
+                });
+                const days = [...groups.entries()]
+                    .map(([key, rs]) => {
+                        const times = rs.map(r => r.time);
+                        const legacyCount = rs.filter(isLegacy).length;
+                        return {
+                            key,
+                            records: [...rs].reverse(), // chronological within the day
+                            count: rs.length,
+                            median: median(times),
+                            best: Math.min(...times),
+                            worst: Math.max(...times),
+                            errors: errorsAvg(rs),
+                            legacy: legacyCount === rs.length,
+                            hasLegacy: legacyCount > 0,
+                        };
+                    })
+                    .sort((a, b) => (a.key < b.key ? -1 : 1));
+
+                // Comparisons (state, records, trend, time of day) use only games timed from the grid's appearance
+                const fresh = records.filter(r => !isLegacy(r));
+                const freshInPeriod = inPeriod.filter(r => !isLegacy(r));
+                const weekStart = dayKey(addDays(keyToDate(todayKey), -6));
+                const prevWeekStart = dayKey(addDays(keyToDate(todayKey), -13));
+                const last7 = fresh.filter(r => r.day >= weekStart).map(r => r.time);
+                const prev7 = fresh.filter(r => r.day >= prevWeekStart && r.day < weekStart).map(r => r.time);
+
+                return {
+                    records,
+                    inPeriod,
+                    freshInPeriod,
+                    legacyCount: records.length - fresh.length,
+                    days,
+                    startKey,
+                    norm: getNorm(records, todayKey),
+                    todayRecords: fresh.filter(r => r.day === todayKey),
+                    normByDay: new Map(days.map(d => [d.key, getNorm(records, d.key).value])),
+                    trend: last7.length >= 3 && prev7.length >= 3 ? deviationPct(median(last7), median(prev7)) : null,
+                    bestId: fresh.reduce((b, r) => (!b || r.time < b.time ? r : b), null)?.id,
+                };
+            }, [history, mode, size, period, todayKey]);
+
+            const handleExport = () => {
+                const payload = { app: 'schulte-focus-pro', version: 1, exportedAt: new Date().toISOString(), history };
+                const url = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `schulte-stats-${todayKey}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            };
+
+            const handleImportFile = (e) => {
+                const file = e.target.files && e.target.files[0];
+                e.target.value = '';
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    try {
+                        const data = JSON.parse(reader.result);
+                        const list = Array.isArray(data) ? data : data.history;
+                        if (!Array.isArray(list)) throw new Error('Unexpected format');
+                        onImport(list);
+                    } catch {
+                        alert('Не вдалося прочитати файл. Оберіть JSON, збережений через «Експорт».');
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            const todayMedian = median(ctx.todayRecords.map(r => r.time));
+            const todayPct = ctx.norm.value !== null && todayMedian !== null ? deviationPct(todayMedian, ctx.norm.value) : null;
+            const todayBand = todayPct !== null ? bandFor(todayPct) : null;
+            const todayErrors = errorsAvg(ctx.todayRecords);
+            const periodErrors = errorsAvg(ctx.inPeriod);
+            const periodDays = period || Math.round((keyToDate(todayKey) - keyToDate(ctx.startKey)) / DAY_MS) + 1;
+
+            const selectCls = 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition-colors';
+
+            return (
+                <div className="min-h-screen bg-[#F5F5F7] dark:bg-slate-950 transition-colors duration-300">
+                    <div className="w-full max-w-xl mx-auto px-4 sm:px-6 pt-6 pb-10 space-y-4 animate-pop">
+                        <header className="flex items-center justify-between">
+                            <button
+                                onClick={onBack}
+                                className="p-3 -ml-3 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-800/50"
+                            >
+                                <div className="flex items-center gap-1 font-medium"><CaretLeftIcon /> Назад</div>
+                            </button>
+                            <h2 className="text-xl font-bold text-slate-900 dark:text-white transition-colors">Статистика</h2>
+                            <div className="w-20" />
+                        </header>
+
+                        {history.length === 0 ? (
+                            <div className="text-center py-20">
+                                <div className="w-16 h-16 bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-full flex items-center justify-center mx-auto mb-4 transition-colors">
+                                    <ChartIcon />
+                                </div>
+                                <p className="text-slate-500 dark:text-slate-400 transition-colors">Статистика поки що порожня.</p>
+                                <p className="text-slate-400 dark:text-slate-500 text-sm mt-1 transition-colors">Зіграйте свою першу гру!</p>
+                            </div>
+                        ) : (
+                            <>
+                                <Card title="Регулярність" subtitle="Усі режими та розміри сітки">
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5">
+                                        <Tile label="Серія" value={regularity.current} sub={`${pluralUk(regularity.current, DAYS_WORDS)} поспіль`} />
+                                        <Tile label="Найдовша серія" value={regularity.best} sub={pluralUk(regularity.best, DAYS_WORDS)} />
+                                        <Tile label="За 30 днів" value={regularity.activeDays30} sub="днів із тренуванням" />
+                                        <Tile label="Сьогодні" value={regularity.today} sub={pluralUk(regularity.today, GAMES_WORDS)} />
+                                    </div>
+                                    <CalendarHeatmap countsByDay={regularity.countsByDay} todayKey={todayKey} />
+                                </Card>
+
+                                {/* Filters scope everything below */}
+                                <div className="sticky top-0 z-30 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 flex flex-wrap items-center gap-2 bg-[#F5F5F7]/90 dark:bg-slate-950/90 backdrop-blur-md">
+                                    <select value={mode} onChange={e => setMode(e.target.value)} className={selectCls} aria-label="Режим">
+                                        {MODE_OPTIONS.map(o => (
+                                            <option key={o.key} value={o.key}>{o.label}{modeCounts[o.key] ? ` (${modeCounts[o.key]})` : ''}</option>
+                                        ))}
+                                    </select>
+                                    <select value={size} onChange={e => setSize(Number(e.target.value))} className={selectCls} aria-label="Розмір сітки">
+                                        {GRID_SIZES.map(s => (
+                                            <option key={s} value={s}>{s}×{s}{sizeCounts[s] ? ` (${sizeCounts[s]})` : ''}</option>
+                                        ))}
+                                    </select>
+                                    <div className="flex bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-1 rounded-xl gap-0.5 transition-colors">
+                                        {PERIODS.map(p => (
+                                            <button
+                                                key={p.days}
+                                                onClick={() => setPeriod(p.days)}
+                                                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
+                                                    period === p.days
+                                                        ? 'bg-slate-900 text-white dark:bg-blue-600'
+                                                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'
+                                                }`}
+                                            >
+                                                {p.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {ctx.records.length === 0 ? (
+                                    <Card>
+                                        <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-6">
+                                            У режимі <strong>{getModeLabel(mode)} {size}×{size}</strong> ще немає ігор.
+                                        </p>
+                                    </Card>
+                                ) : (
+                                    <>
+                                        <Card title="Стан сьогодні" subtitle={`${getModeLabel(mode)} · ${size}×${size} · порівняння з вашою нормою`}>
+                                            {ctx.norm.value === null ? (
+                                                <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                    Ваша норма ще формується. Вона рахується за іграми попередніх днів — потрібно ще{' '}
+                                                    <strong>{NORM_MIN - ctx.norm.count} {pluralUk(NORM_MIN - ctx.norm.count, GAMES_WORDS)}</strong> у цьому режимі.
+                                                </p>
+                                            ) : todayBand === null ? (
+                                                <div className="text-sm text-slate-500 dark:text-slate-400 space-y-2">
+                                                    <p>Сьогодні ще не було ігор у цьому режимі. Зіграйте 2–3 таблиці, щоб оцінити поточний стан.</p>
+                                                    <p>Ваша норма: <span className="font-mono font-semibold text-slate-800 dark:text-slate-100">{formatTime(ctx.norm.value)}</span></p>
+                                                </div>
+                                            ) : (
+                                                <div>
+                                                    <div className="flex items-start justify-between gap-4">
+                                                        <div className="flex items-center gap-3 min-w-0">
+                                                            <div className={`w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center text-2xl ${todayBand.cls}`}>
+                                                                <i className={`ph ${todayBand.icon}`}></i>
+                                                            </div>
+                                                            <div className="min-w-0">
+                                                                <p className="text-lg font-bold text-slate-900 dark:text-white leading-tight">{todayBand.label}</p>
+                                                                <p className="text-sm text-slate-500 dark:text-slate-400">{describePct(todayPct)}</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="text-right shrink-0">
+                                                            <p className="text-2xl font-mono font-bold text-slate-900 dark:text-white leading-tight">{formatTime(todayMedian)}</p>
+                                                            <p className="text-[11px] text-slate-400 dark:text-slate-500">медіана сьогодні</p>
+                                                        </div>
+                                                    </div>
+                                                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-3">{todayBand.hint}</p>
+                                                    <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                                                        <span>Норма <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">{formatTime(ctx.norm.value)}</span></span>
+                                                        <span>Сьогодні {ctx.todayRecords.length} {pluralUk(ctx.todayRecords.length, GAMES_WORDS)}</span>
+                                                        {todayErrors !== null && (
+                                                            <span>Помилок на гру {todayErrors.toFixed(1)}{ctx.norm.errors !== null ? ` (норма ${ctx.norm.errors.toFixed(1)})` : ''}</span>
+                                                        )}
+                                                    </div>
+                                                    {ctx.todayRecords.length < 3 && (
+                                                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
+                                                            Попередня оцінка: для точності зіграйте щонайменше 3 таблиці.
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-4 leading-relaxed">
+                                                Норма — медіана ваших останніх {NORM_WINDOW} ігор у цьому режимі до сьогодні. Оцінка відносна: ви порівнюєтесь лише із собою.
+                                            </p>
+                                            {ctx.legacyCount > 0 && (
+                                                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2 leading-relaxed flex gap-1.5">
+                                                    <i className="ph ph-info text-sm leading-none"></i>
+                                                    <span>
+                                                        {ctx.legacyCount} {pluralUk(ctx.legacyCount, GAMES_WORDS)} до 25 вересня показано в графіку та журналі, але не враховано в нормі, рекордах і трендах: тоді час рахувався з першого кліку, а не з появи таблиці.
+                                                    </span>
+                                                </p>
+                                            )}
+                                        </Card>
+
+                                        <Card title="Підсумок за період" subtitle={`${periodDays} ${pluralUk(periodDays, DAYS_WORDS)}`}>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <Tile label="Ігор" value={ctx.inPeriod.length} />
+                                                <Tile label="Днів" value={ctx.days.length} sub="активних" />
+                                                <Tile label="Найкращий" mono value={ctx.freshInPeriod.length ? formatTime(Math.min(...ctx.freshInPeriod.map(r => r.time))) : '—'} />
+                                                <Tile label="Медіана" mono value={ctx.inPeriod.length ? formatTime(median(ctx.inPeriod.map(r => r.time))) : '—'} />
+                                                <Tile label="Помилок" value={periodErrors !== null ? periodErrors.toFixed(1) : '—'} sub="на гру" />
+                                                <Tile
+                                                    label="Тренд 7 дн"
+                                                    value={ctx.trend !== null
+                                                        ? <span className="inline-flex items-center gap-1"><i className={`ph ${ctx.trend <= 0 ? 'ph-trend-down' : 'ph-trend-up'}`}></i>{formatPct(ctx.trend)}</span>
+                                                        : '—'}
+                                                    valueClass={ctx.trend === null ? '' : ctx.trend <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}
+                                                    sub={ctx.trend === null ? 'мало даних' : ctx.trend <= 0 ? 'швидше' : 'повільніше'}
+                                                />
+                                            </div>
+                                        </Card>
+
+                                        <Card title="Динаміка" subtitle="Медіана часу за день, секунди · менше — краще">
+                                            {ctx.days.length < 2 ? (
+                                                <p className="text-sm text-slate-400 dark:text-slate-500">Графік з'явиться, коли будуть ігри щонайменше у 2 різні дні за цей період.</p>
+                                            ) : (
+                                                <>
+                                                    <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3">
+                                                        <LegendKey kind="line" color="var(--viz-accent)" label="медіана дня" />
+                                                        <LegendKey kind="box" color="var(--viz-wash)" label="від кращої до гіршої гри" />
+                                                        {ctx.norm.value !== null && <LegendKey kind="dash" color="var(--viz-ref)" label="ваша норма" />}
+                                                        {ctx.days.some(d => d.legacy) && <LegendKey kind="ring" color="var(--viz-accent)" label="старий відлік (з першого кліку)" />}
+                                                    </div>
+                                                    <TrendChart days={ctx.days} norm={ctx.norm.value} startKey={ctx.startKey} endKey={todayKey} />
+                                                </>
+                                            )}
+                                        </Card>
+
+                                        <Card title="Коли ви найзібраніші" subtitle="Медіана часу за період залежно від часу доби">
+                                            <DaypartBars records={ctx.freshInPeriod} />
+                                        </Card>
+
+                                        <Card title="Журнал по днях" subtitle="Медіана часу за день і відхилення від норми, якою вона була на той день">
+                                            {ctx.days.length === 0 ? (
+                                                <p className="text-sm text-slate-400 dark:text-slate-500">За цей період ігор немає.</p>
+                                            ) : (
+                                                <DayJournal
+                                                    key={`${mode}-${size}-${period}`}
+                                                    days={[...ctx.days].reverse()}
+                                                    normByDay={ctx.normByDay}
+                                                    bestId={ctx.bestId}
+                                                />
+                                            )}
+                                        </Card>
+                                    </>
+                                )}
+                            </>
+                        )}
+
+                        <Card title="Дані">
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
+                                Статистика зберігається лише в цьому браузері. Робіть експорт, щоб не втратити історію або перенести її на інший пристрій.
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    onClick={handleExport}
+                                    disabled={history.length === 0}
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40 transition-colors"
+                                >
+                                    <i className="ph ph-download-simple"></i> Експорт
+                                </button>
+                                <button
+                                    onClick={() => fileRef.current && fileRef.current.click()}
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                                >
+                                    <i className="ph ph-upload-simple"></i> Імпорт
+                                </button>
+                                <button
+                                    onClick={onClear}
+                                    disabled={history.length === 0}
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-xl text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 transition-colors ml-auto"
+                                >
+                                    <TrashIcon /> Очистити
+                                </button>
+                                <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImportFile} />
+                            </div>
+                        </Card>
+                    </div>
+                </div>
+            );
+        };
+
         const App = () => {
             // -- State --
-            // gameState: 'menu' | 'playing' | 'won' | 'history'
+            // gameState: 'menu' | 'playing' | 'won' | 'stats'
             const [gameState, setGameState]   = useState('menu');
             const [gridSize, setGridSize]     = useState(5);
             const [isGorbov, setIsGorbov]     = useState(false);
@@ -211,12 +1167,17 @@
             const [elapsed, setElapsed]     = useState(0);
             const [shakeId, setShakeId]     = useState(null);
 
-            const [history, setHistory] = useState(() => {
-                const saved = localStorage.getItem('schulte_history');
-                return saved ? JSON.parse(saved) : [];
-            });
+            const [history, setHistory]       = useState(loadHistory);
+            const [lastResult, setLastResult] = useState(null);
 
             const timerRef = useRef(null);
+            // Per-game tracking that doesn't need re-renders
+            const errorsRef       = useRef(0);
+            const splitsRef       = useRef([]);        // centiseconds per correct step
+            const lastHitRef      = useRef(0);
+            const hitIdsRef       = useRef(new Set()); // cells already found (ignores repeat taps during the flash)
+            const finishedRef     = useRef(false);
+            const finishTimerRef  = useRef(null);
 
             // -- Effects --
 
@@ -239,29 +1200,63 @@
                 return () => clearInterval(timerRef.current);
             }, [gameState, startTime]);
 
+            useEffect(() => {
+                persistHistory(history);
+            }, [history]);
+
+            const streakInfo = useMemo(() => {
+                const countsByDay = new Map();
+                history.forEach(r => {
+                    const k = dayKey(r.date);
+                    countsByDay.set(k, (countsByDay.get(k) || 0) + 1);
+                });
+                const todayKey = dayKey(new Date());
+                return { ...computeStreaks(countsByDay, todayKey), today: countsByDay.get(todayKey) || 0 };
+            }, [history]);
+
             // -- Logic --
 
             const getCurrentModeKey = () => isGorbov ? (isTrueGorbov ? 'gorbov-true' : 'gorbov') : (isColorful ? 'colorful' : 'classic');
 
-            const saveResult = (finalTime) => {
-                const newRecord = {
+            const saveResult = (finalTime, errors, splits) => {
+                const record = {
                     id: Date.now(),
                     date: new Date().toISOString(),
                     time: finalTime,
                     gridSize,
-                    mode: getCurrentModeKey()
+                    mode: getCurrentModeKey(),
+                    errors,
+                    splits,
                 };
-                const updatedHistory = [newRecord, ...history];
-                if (updatedHistory.length > 200) updatedHistory.pop();
-                setHistory(updatedHistory);
-                localStorage.setItem('schulte_history', JSON.stringify(updatedHistory));
+                setHistory(prev => [record, ...prev].slice(0, HISTORY_LIMIT));
+                setLastResult(record);
             };
 
             const clearHistory = () => {
-                if (confirm('Ви впевнені, що хочете очистити історію?')) {
+                if (confirm('Видалити всю статистику? Цю дію не можна скасувати — за потреби спершу зробіть експорт.')) {
                     setHistory([]);
-                    localStorage.removeItem('schulte_history');
                 }
+            };
+
+            // Merge records from an exported file; existing ids are kept as they are
+            const importHistory = (list) => {
+                const incoming = new Map();
+                list.forEach(r => {
+                    if (!r || typeof r.time !== 'number' || !(r.time > 0) || !Number.isInteger(r.gridSize)
+                        || typeof r.mode !== 'string' || isNaN(Date.parse(r.date))) return;
+                    const id = r.id ?? Date.parse(r.date);
+                    incoming.set(id, { ...r, id });
+                });
+                const known = new Set(history.map(r => r.id));
+                const fresh = [...incoming.values()].filter(r => !known.has(r.id));
+                if (fresh.length) {
+                    setHistory(prev => [...prev, ...fresh]
+                        .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
+                        .slice(0, HISTORY_LIMIT));
+                }
+                alert(fresh.length
+                    ? `Додано ${fresh.length} ${pluralUk(fresh.length, ['результат', 'результати', 'результатів'])}.`
+                    : 'Нових результатів у файлі немає — усе вже є в статистиці.');
             };
 
             const palette = [
@@ -319,7 +1314,15 @@
                 setFoundIds(new Set());
                 setSuccessId(null);
                 setShakeId(null);
-                setStartTime(Date.now());
+
+                const now = Date.now();
+                clearTimeout(finishTimerRef.current);
+                errorsRef.current = 0;
+                splitsRef.current = [];
+                lastHitRef.current = now;
+                hitIdsRef.current = new Set();
+                finishedRef.current = false;
+                setStartTime(now);
                 setGameState('playing');
             };
 
@@ -329,6 +1332,8 @@
             };
 
             const handleCellClick = (cell) => {
+                // Ignore taps after the finish and repeat taps on a cell that was just found
+                if (finishedRef.current || hitIdsRef.current.has(cell.id)) return;
                 if (shakeId !== null) setShakeId(null);
 
                 let isCorrect = false;
@@ -373,6 +1378,11 @@
                 }
 
                 if (isCorrect) {
+                    const now = Date.now();
+                    hitIdsRef.current.add(cell.id);
+                    splitsRef.current.push(Math.round((now - lastHitRef.current) / 10));
+                    lastHitRef.current = now;
+
                     // ✅ NEW: green flash + mark as found
                     setSuccessId(cell.id);
                     vibrate(40);
@@ -382,35 +1392,27 @@
                     }, 350);
 
                     if (gameFinished) {
+                        finishedRef.current = true;
                         // Stop the clock at the exact moment of the last click
-                        const finalTime = (Date.now() - startTime) / 1000;
+                        const finalTime = (now - startTime) / 1000;
                         clearInterval(timerRef.current);
                         setElapsed(finalTime);
+                        const errors = errorsRef.current;
+                        const splits = [...splitsRef.current];
                         // slight delay so last flash is visible
-                        setTimeout(() => {
-                            saveResult(finalTime);
+                        finishTimerRef.current = setTimeout(() => {
+                            saveResult(finalTime, errors, splits);
                             setGameState('won');
                         }, 300);
                     }
                 } else {
+                    errorsRef.current += 1;
                     // ✅ NEW: stronger vibration on mistake
                     vibrate([40, 30, 40]);
                     setShakeId(cell.id);
                     setTimeout(() => setShakeId(null), 400);
                 }
             };
-
-            const formatTime = (seconds) => {
-                const mins = Math.floor(seconds / 60);
-                const secs = Math.floor(seconds % 60);
-                const ms   = Math.floor((seconds % 1) * 100);
-                return `${mins > 0 ? mins + ':' : ''}${secs < 10 && mins > 0 ? '0' : ''}${secs}.${ms < 10 ? '0' : ''}${ms}`;
-            };
-
-            const formatDate = (isoString) =>
-                new Intl.DateTimeFormat('uk-UA', {
-                    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
-                }).format(new Date(isoString));
 
             const getInstructionText = () => {
                 if (!isGorbov) return `Знайдіть число: ${nextTarget}`;
@@ -422,15 +1424,6 @@
                 return (
                     <span>Знайдіть: <span className={`font-bold ${colorClass}`}>{colorText} {targetNum}</span></span>
                 );
-            };
-
-            const getModeLabel = (mode) => {
-                switch (mode) {
-                    case 'gorbov-true': return 'Горбов (Справжній)';
-                    case 'gorbov':   return 'Горбов (Спрощений)';
-                    case 'colorful': return 'Кольоровий';
-                    default:         return 'Класика';
-                }
             };
 
             const getDynamicFontSize = () => {
@@ -468,6 +1461,20 @@
                                 </div>
                                 <h1 className="text-2xl font-bold text-slate-800 dark:text-white transition-colors">Schulte Focus Pro</h1>
                                 <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 transition-colors">Тренуйте зір та увагу</p>
+                                {history.length > 0 && (
+                                    streakInfo.current > 0 ? (
+                                        <p className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+                                            <i className="ph ph-fire text-sm"></i>
+                                            {streakInfo.current} {pluralUk(streakInfo.current, DAYS_WORDS)} поспіль
+                                            {streakInfo.today > 0 && ` · сьогодні ${streakInfo.today} ${pluralUk(streakInfo.today, GAMES_WORDS)}`}
+                                        </p>
+                                    ) : (
+                                        <p className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-500 dark:bg-slate-700/60 dark:text-slate-400">
+                                            <i className="ph ph-calendar-check text-sm"></i>
+                                            Сьогодні ще без тренування
+                                        </p>
+                                    )
+                                )}
                             </div>
 
                             <div className="space-y-5">
@@ -511,10 +1518,12 @@
 
                                 <div className="flex gap-3 pt-2">
                                     <button
-                                        onClick={() => setGameState('history')}
+                                        onClick={() => setGameState('stats')}
                                         className="w-1/4 py-4 bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 rounded-2xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center justify-center"
+                                        title="Статистика"
+                                        aria-label="Статистика"
                                     >
-                                        <ClockIcon />
+                                        <ChartIcon />
                                     </button>
                                     <button
                                         onClick={startGame}
@@ -529,132 +1538,17 @@
                 );
             }
 
-            // 2. History Screen
-            if (gameState === 'history') {
-                const contextMode    = getCurrentModeKey();
-                const contextSize    = gridSize;
-                const contextRecords = history.filter(r => r.mode === contextMode && r.gridSize === contextSize);
-                const currentContextBest = contextRecords.length > 0
-                    ? contextRecords.reduce((prev, cur) => prev.time < cur.time ? prev : cur)
-                    : null;
-
-                const bestRecordsMap = {};
-                history.forEach(record => {
-                    const key = `${record.mode}-${record.gridSize}`;
-                    if (!bestRecordsMap[key] || record.time < bestRecordsMap[key].time) {
-                        bestRecordsMap[key] = record;
-                    }
-                });
-
+            // 2. Statistics Screen
+            if (gameState === 'stats') {
                 return (
-                    <div className="min-h-screen flex flex-col items-center bg-[#F5F5F7] dark:bg-slate-950 p-6 relative transition-colors duration-300">
-                        <div className="w-full max-w-md animate-pop">
-                            <header className="flex items-center justify-between mb-8">
-                                <button
-                                    onClick={() => setGameState('menu')}
-                                    className="p-3 -ml-3 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-800/50"
-                                >
-                                    <div className="flex items-center gap-1 font-medium"><CaretLeftIcon /> Назад</div>
-                                </button>
-                                <h2 className="text-xl font-bold text-slate-900 dark:text-white transition-colors">Історія</h2>
-                                <button
-                                    onClick={clearHistory}
-                                    className="p-3 -mr-3 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors rounded-full hover:bg-red-50 dark:hover:bg-red-900/20"
-                                    disabled={history.length === 0}
-                                >
-                                    <TrashIcon />
-                                </button>
-                            </header>
-
-                            {history.length === 0 ? (
-                                <div className="text-center py-20">
-                                    <div className="w-16 h-16 bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-full flex items-center justify-center mx-auto mb-4 transition-colors">
-                                        <ClockIcon />
-                                    </div>
-                                    <p className="text-slate-500 dark:text-slate-400 transition-colors">Історія поки що порожня.</p>
-                                    <p className="text-slate-400 dark:text-slate-500 text-sm mt-1 transition-colors">Зіграйте свою першу гру!</p>
-                                </div>
-                            ) : (
-                                <div className="space-y-3 pb-8">
-                                    {/* ✅ NEW: Stats summary card */}
-                                    <StatsCard records={contextRecords} />
-
-                                    {/* Best record card */}
-                                    {currentContextBest ? (
-                                        <div className="mb-6 bg-gradient-to-r from-slate-800 to-slate-900 dark:from-blue-600 dark:to-blue-700 rounded-2xl p-5 text-white shadow-lg animate-pop">
-                                            <div className="flex justify-between items-center">
-                                                <div className="flex items-center gap-4">
-                                                    <div className="bg-white/20 p-2.5 rounded-xl backdrop-blur-sm"><TrophyIcon /></div>
-                                                    <div>
-                                                        <p className="text-xs font-bold text-white/80 uppercase tracking-wide">
-                                                            {getModeLabel(contextMode)} {contextSize}×{contextSize}
-                                                        </p>
-                                                        <p className="text-sm font-medium opacity-90">Найкращий результат</p>
-                                                    </div>
-                                                </div>
-                                                <div className="text-3xl font-mono font-bold tracking-tight">
-                                                    {formatTime(currentContextBest.time)}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="mb-6 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-center text-slate-500 text-sm">
-                                            У вас ще немає ігор у режимі <strong>{getModeLabel(contextMode)} {contextSize}×{contextSize}</strong>
-                                        </div>
-                                    )}
-
-                                    <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 mt-4 ml-1">Всі результати</h3>
-
-                                    {history.map((record) => {
-                                        const isBestInClass = bestRecordsMap[`${record.mode}-${record.gridSize}`]?.id === record.id;
-                                        return (
-                                            <div
-                                                key={record.id}
-                                                className={`relative p-4 rounded-2xl shadow-sm border flex items-center justify-between animate-slide transition-colors
-                                                    ${isBestInClass
-                                                        ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700/50'
-                                                        : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700'
-                                                    }`}
-                                            >
-                                                <div>
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <span className={`text-sm font-semibold transition-colors ${isBestInClass ? 'text-amber-800 dark:text-amber-400' : 'text-slate-800 dark:text-slate-200'}`}>
-                                                            {getModeLabel(record.mode)}
-                                                        </span>
-                                                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium transition-colors ${
-                                                            isBestInClass
-                                                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                                                                : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'
-                                                        }`}>
-                                                            {record.gridSize}×{record.gridSize}
-                                                        </span>
-                                                    </div>
-                                                    <p className={`text-xs font-medium transition-colors ${isBestInClass ? 'text-amber-600/70 dark:text-amber-500/60' : 'text-slate-400 dark:text-slate-500'}`}>
-                                                        {formatDate(record.date)}
-                                                    </p>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    {isBestInClass && (
-                                                        <div className="flex flex-col items-end">
-                                                            <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider mb-0.5">Рекорд</span>
-                                                            <TrophySimpleIcon />
-                                                        </div>
-                                                    )}
-                                                    <span className={`text-xl font-mono font-medium transition-colors ${
-                                                        isBestInClass
-                                                            ? 'text-amber-600 dark:text-amber-400 font-bold'
-                                                            : 'text-slate-900 dark:text-white'
-                                                    }`}>
-                                                        {formatTime(record.time)}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                    <StatsScreen
+                        history={history}
+                        initialMode={getCurrentModeKey()}
+                        initialSize={gridSize}
+                        onBack={() => setGameState('menu')}
+                        onImport={importHistory}
+                        onClear={clearHistory}
+                    />
                 );
             }
 
@@ -662,17 +1556,22 @@
             if (gameState === 'won') {
                 const contextMode    = getCurrentModeKey();
                 const contextRecords = history.filter(r => r.mode === contextMode && r.gridSize === gridSize);
-                const best = contextRecords.length > 0
-                    ? Math.min(...contextRecords.map(r => r.time))
-                    : null;
+                // Records only count games timed from the grid's appearance
+                const freshTimes = contextRecords.filter(r => !isLegacy(r)).map(r => r.time);
+                const best = freshTimes.length > 0 ? Math.min(...freshTimes) : null;
                 const isNewRecord = best !== null && elapsed <= best;
+
+                const norm = getNorm(contextRecords, dayKey(new Date())).value;
+                const normPct = norm !== null ? deviationPct(elapsed, norm) : null;
+                const lapses = lastResult ? countLapses(lastResult.splits) : null;
+                const stepLabel = contextMode.startsWith('gorbov') ? (i) => `крок ${i + 1}` : (i) => `число ${i + 1}`;
 
                 return (
                     <div className="min-h-screen flex flex-col items-center justify-center p-6 relative bg-[#F5F5F7] dark:bg-slate-950 transition-colors duration-300">
-                        <div className="w-full max-w-sm bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl rounded-3xl shadow-2xl p-8 text-center animate-pop border border-white/50 dark:border-slate-700 transition-colors">
+                        <div className="w-full max-w-sm bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl rounded-3xl shadow-2xl p-6 sm:p-8 text-center animate-pop border border-white/50 dark:border-slate-700 transition-colors">
 
                             {/* ✅ IMPROVED: show trophy if new record */}
-                            <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 transition-colors ${
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 transition-colors ${
                                 isNewRecord
                                     ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-500'
                                     : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
@@ -683,15 +1582,32 @@
                             <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2 transition-colors">
                                 {isNewRecord ? '🏆 Новий рекорд!' : 'Чудово!'}
                             </h2>
-                            <p className="text-slate-500 dark:text-slate-400 mb-8 transition-colors">Результат збережено в історію.</p>
+                            <p className="text-slate-500 dark:text-slate-400 mb-5 transition-colors">Результат збережено в статистику.</p>
 
-                            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-6 mb-8 border border-slate-100 dark:border-slate-700 transition-colors">
+                            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-5 mb-3 border border-slate-100 dark:border-slate-700 transition-colors">
                                 <p className="text-sm text-slate-400 dark:text-slate-500 uppercase tracking-wide font-semibold mb-1">Час</p>
                                 <p className="text-4xl font-mono font-medium text-slate-900 dark:text-white transition-colors">{formatTime(elapsed)}</p>
                                 {best && !isNewRecord && (
                                     <p className="text-xs text-slate-400 mt-2">Рекорд: {formatTime(best)}</p>
                                 )}
+                                {normPct !== null && (
+                                    <div className="mt-3">
+                                        <StateChip pct={normPct} text={`${formatPct(normPct)} від вашої норми`} />
+                                    </div>
+                                )}
                             </div>
+
+                            <div className="grid grid-cols-2 gap-2 mb-3 text-left">
+                                <Tile label="Помилки" value={lastResult ? lastResult.errors : '—'} sub="хибних натискань" />
+                                <Tile label="Зависання" value={lapses ?? '—'} sub="удвічі довше за темп" />
+                            </div>
+
+                            {lastResult && Array.isArray(lastResult.splits) && lastResult.splits.length > 1 && (
+                                <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl px-4 pt-3 pb-3 mb-5 border border-slate-100 dark:border-slate-700 text-left transition-colors">
+                                    <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-3">Темп по кроках</p>
+                                    <SplitsChart splits={lastResult.splits} stepLabel={stepLabel} />
+                                </div>
+                            )}
 
                             <button
                                 onClick={() => setGameState('menu')}
@@ -701,10 +1617,10 @@
                             </button>
                             <div className="flex gap-3">
                                 <button
-                                    onClick={() => setGameState('history')}
+                                    onClick={() => setGameState('stats')}
                                     className="flex-1 py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-medium hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
                                 >
-                                    Історія
+                                    Статистика
                                 </button>
                                 <button
                                     onClick={startGame}
