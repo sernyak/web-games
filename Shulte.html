@@ -73,18 +73,11 @@
             100% { transform: scale(1);    opacity: 0.25; }
         }
 
-        /* ✅ NEW: Pulse for "ready" state hint */
-        @keyframes readyPulse {
-            0%, 100% { opacity: 1; }
-            50%       { opacity: 0.5; }
-        }
-
         .animate-pop   { animation: popIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
         .animate-slide { animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
         .animate-shake { animation: shake 0.3s ease-in-out; }
         .animate-success-light { animation: successFlash 0.45s ease-out forwards; }
         .animate-success-dark  { animation: successFlashDark 0.45s ease-out forwards; }
-        .animate-ready-pulse   { animation: readyPulse 1.4s ease-in-out infinite; }
 
         .cell-shadow {
             box-shadow: 0 2px 5px rgba(0,0,0,0.05);
@@ -196,8 +189,7 @@
 
         const App = () => {
             // -- State --
-            // gameState: 'menu' | 'ready' | 'playing' | 'won' | 'history'
-            // ✅ CHANGED: added 'ready' state (grid visible, timer not started)
+            // gameState: 'menu' | 'playing' | 'won' | 'history'
             const [gameState, setGameState]   = useState('menu');
             const [gridSize, setGridSize]     = useState(5);
             const [isGorbov, setIsGorbov]     = useState(false);
@@ -234,18 +226,18 @@
 
             const toggleTheme = () => setIsDark(d => !d);
 
-            // Timer only runs in 'playing' state
+            // Timer runs from the moment the grid appears (startTime) while in 'playing' state.
+            // startTime is a dependency so a restart mid-game resets the interval.
             useEffect(() => {
-                if (gameState === 'playing') {
-                    const start = Date.now() - elapsed * 1000; // resume from current elapsed
+                if (gameState === 'playing' && startTime !== null) {
                     timerRef.current = setInterval(() => {
-                        setElapsed((Date.now() - start) / 1000);
+                        setElapsed((Date.now() - startTime) / 1000);
                     }, 50);
                 } else {
                     clearInterval(timerRef.current);
                 }
                 return () => clearInterval(timerRef.current);
-            }, [gameState]);
+            }, [gameState, startTime]);
 
             // -- Logic --
 
@@ -310,7 +302,7 @@
                 setCells(newCells);
             }, [gridSize, isGorbov, isColorful]);
 
-            // ✅ CHANGED: startGame now sets state to 'ready' (grid visible, timer NOT started)
+            // Timer starts immediately with the grid, so the layout can't be memorized before the clock runs
             const startGame = () => {
                 generateGrid();
                 setNextTarget(1);
@@ -327,7 +319,8 @@
                 setFoundIds(new Set());
                 setSuccessId(null);
                 setShakeId(null);
-                setGameState('ready');
+                setStartTime(Date.now());
+                setGameState('playing');
             };
 
             // ✅ NEW: vibrate helper (mobile)
@@ -336,12 +329,6 @@
             };
 
             const handleCellClick = (cell) => {
-                // ✅ CHANGED: first click starts the timer
-                if (gameState === 'ready') {
-                    setStartTime(Date.now());
-                    setGameState('playing');
-                }
-
                 if (shakeId !== null) setShakeId(null);
 
                 let isCorrect = false;
@@ -395,7 +382,10 @@
                     }, 350);
 
                     if (gameFinished) {
-                        const finalTime = elapsed; // will be current elapsed
+                        // Stop the clock at the exact moment of the last click
+                        const finalTime = (Date.now() - startTime) / 1000;
+                        clearInterval(timerRef.current);
+                        setElapsed(finalTime);
                         // slight delay so last flash is visible
                         setTimeout(() => {
                             saveResult(finalTime);
@@ -728,9 +718,7 @@
                 );
             }
 
-            // 4. Game Board (ready | playing)
-            const isReady = gameState === 'ready';
-
+            // 4. Game Board (playing)
             return (
                 <div className="min-h-screen flex flex-col items-center bg-[#F5F5F7] dark:bg-slate-950 text-slate-900 dark:text-white relative transition-colors duration-300">
 
@@ -744,9 +732,8 @@
                             <CaretLeftIcon />
                         </button>
 
-                        {/* ✅ CHANGED: timer shows dashes while in 'ready' state */}
-                        <div className={`font-mono text-xl font-medium bg-white dark:bg-slate-800 px-4 py-1 rounded-full shadow-sm border border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200 tabular-nums transition-colors ${isReady ? 'animate-ready-pulse' : ''}`}>
-                            {isReady ? '–  –  –' : formatTime(elapsed)}
+                        <div className="font-mono text-xl font-medium bg-white dark:bg-slate-800 px-4 py-1 rounded-full shadow-sm border border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200 tabular-nums transition-colors">
+                            {formatTime(elapsed)}
                         </div>
 
                         <button
@@ -758,19 +745,11 @@
                         </button>
                     </header>
 
-                    {/* ✅ CHANGED: instruction pill + ready hint */}
-                    <div className={`mb-3 px-6 py-2 backdrop-blur-md rounded-full shadow-sm border text-lg font-medium transition-colors ${
-                        isReady
-                            ? 'bg-blue-50/80 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-600 dark:text-blue-300 animate-ready-pulse'
-                            : 'bg-white/60 dark:bg-slate-800/60 border-white/50 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}>
-                        {isReady ? '👆 Натисніть будь-яке число, щоб почати' : getInstructionText()}
+                    <div className="mb-3 px-6 py-2 backdrop-blur-md rounded-full shadow-sm border text-lg font-medium transition-colors bg-white/60 dark:bg-slate-800/60 border-white/50 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                        {getInstructionText()}
                     </div>
 
-                    {/* ProgressBar always rendered to prevent layout shift on first click */}
-                    <div style={{ visibility: isReady ? 'hidden' : 'visible' }}>
-                        <ProgressBar current={nextTarget} total={totalCells} />
-                    </div>
+                    <ProgressBar current={nextTarget} total={totalCells} />
 
                     <div className="flex-1 flex items-center justify-center w-full px-4 pb-12">
                         <div
